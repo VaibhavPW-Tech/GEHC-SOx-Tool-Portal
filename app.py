@@ -1,16 +1,30 @@
-import streamlit as st
+"""
+GEHC SOx Tool Portal — Single-File Streamlit Application
+=======================================================
+Contains: SSO login, self-service account registration with admin
+approval workflow, password change, Admin Portal (Admin-only),
+Application Dashboard, Saviynt Tool, CM Automation Tool.
+
+Demo credentials (auto-seeded on first run, ./data/users.json):
+    Admin              -> admin1   / Admin@123
+"""
+
+import json
+import os
+import hashlib
+import datetime
 import re
 import time
-import os
 import glob
 import zipfile
 import tempfile
-import datetime
 import shutil
 import subprocess
 import io
 
+import streamlit as st
 import pandas as pd
+import pdfplumber
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -21,383 +35,680 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.common.exceptions import TimeoutException, StaleElementReferenceException
-from webdriver_manager.chrome import ChromeDriverManager
 
-import pdfplumber
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils.dataframe import dataframe_to_rows
 
-# ============================================================
-# PAGE CONFIG (must be the very first Streamlit call)
-# ============================================================
-st.set_page_config(
-    page_title="GEHC SOX Tools",
-    layout="wide",
-    page_icon="🚀",
-    initial_sidebar_state="expanded",
-)
+IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
-# ============================================================
-# GLOBAL CUSTOM STYLING
-# ============================================================
-st.markdown(
-    """
-    <style>
-    /* ---------- General page polish ---------- */
-    .stApp {
-        background: linear-gradient(180deg, #0b1020 0%, #10162b 100%);
-    }
-    #MainMenu, footer {visibility: hidden;}
-
-    /* ---------- Hero banner ---------- */
-    .portal-hero {
-        background: linear-gradient(135deg, #4338ca 0%, #6366f1 45%, #06b6d4 100%);
-        padding: 2.2rem 2.4rem;
-        border-radius: 1rem;
-        margin-bottom: 1.6rem;
-        box-shadow: 0 10px 30px rgba(67, 56, 202, 0.35);
-    }
-    .portal-hero h1 {
-        color: #ffffff;
-        font-size: 2.1rem;
-        margin: 0;
-        font-weight: 800;
-    }
-    .portal-hero p {
-        color: #e0e7ff;
-        margin-top: 0.4rem;
-        font-size: 1.02rem;
-    }
-
-    /* ---------- Page banner (per-tool) ---------- */
-    .page-banner {
-        background: rgba(255,255,255,0.04);
-        border: 1px solid rgba(255,255,255,0.08);
-        padding: 1.1rem 1.5rem;
-        border-radius: 0.8rem;
-        margin-bottom: 1.4rem;
-    }
-    .page-banner h2 {
-        margin: 0;
-        color: #f8fafc;
-        font-size: 1.5rem;
-    }
-    .page-banner p {
-        margin: 0.2rem 0 0 0;
-        color: #94a3b8;
-        font-size: 0.95rem;
-    }
-
-    /* ---------- Tool cards on home page ---------- */
-    .tool-card {
-        background: rgba(255,255,255,0.045);
-        border: 1px solid rgba(255,255,255,0.09);
-        border-radius: 1rem;
-        padding: 1.4rem 1.3rem;
-        height: 100%;
-        transition: transform 0.15s ease, border-color 0.15s ease;
-    }
-    .tool-card:hover {
-        border-color: #6366f1;
-        transform: translateY(-3px);
-    }
-    .tool-card .icon {
-        font-size: 2.2rem;
-    }
-    .tool-card h3 {
-        color: #f1f5f9;
-        margin: 0.5rem 0 0.3rem 0;
-        font-size: 1.15rem;
-    }
-    .tool-card p {
-        color: #94a3b8;
-        font-size: 0.88rem;
-        min-height: 3.4rem;
-    }
-
-    /* ---------- Sidebar polish ---------- */
-    section[data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #0f1428 0%, #141a33 100%);
-        border-right: 1px solid rgba(255,255,255,0.06);
-    }
-    .avatar-circle {
-        width: 46px; height: 46px;
-        border-radius: 50%;
-        background: linear-gradient(135deg, #6366f1, #06b6d4);
-        color: white;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: 700;
-        font-size: 1.05rem;
-        margin-right: 0.7rem;
-    }
-    .sidebar-user-box {
-        display: flex;
-        align-items: center;
-        background: rgba(255,255,255,0.04);
-        border: 1px solid rgba(255,255,255,0.08);
-        border-radius: 0.7rem;
-        padding: 0.6rem 0.7rem;
-        margin-bottom: 0.9rem;
-    }
-    .sidebar-user-box .info .name {
-        color: #f1f5f9;
-        font-weight: 700;
-        font-size: 0.95rem;
-        line-height: 1.1;
-    }
-    .sidebar-user-box .info .sso {
-        color: #94a3b8;
-        font-size: 0.75rem;
-    }
-
-    /* ---------- Buttons ---------- */
-    .stButton>button {
-        border-radius: 0.55rem;
-        font-weight: 600;
-        transition: all 0.15s ease;
-    }
-    .stButton>button:hover {
-        transform: translateY(-1px);
-    }
-
-    /* ---------- Login card ---------- */
-    .login-card {
-        background: rgba(255,255,255,0.04);
-        border: 1px solid rgba(255,255,255,0.09);
-        border-radius: 1.1rem;
-        padding: 2.2rem 2.2rem 1.6rem 2.2rem;
-        box-shadow: 0 12px 35px rgba(0,0,0,0.35);
-    }
-    .login-logo {
-        font-size: 2.6rem;
-        text-align: center;
-        margin-bottom: 0.2rem;
-    }
-    .login-title {
-        text-align: center;
-        color: #f8fafc;
-        font-weight: 800;
-        font-size: 1.5rem;
-        margin-bottom: 0.15rem;
-    }
-    .login-subtitle {
-        text-align: center;
-        color: #94a3b8;
-        font-size: 0.92rem;
-        margin-bottom: 1.4rem;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-# ============================================================
-# CONFIG: Hardcoded valid SSO -> Name mapping
-# ============================================================
-VALID_SSO_DICT = {
-
-  "550005636": "Harshita Chawla",
-  "550005637": "Sidak Kaur",
-  "550025844": "Jahanvi Vaid",
-  "550025846": "Ashna Tandon",
-  "550020293": "Vaibhav Goyal",
-  "550020292": "Jeevika Tuli",
-  "550015783": "Russh Ahluwalia",
-  "550025845": "Anagh Kaura",
-  "550005634": "Amanpreet Singh",
-  "550005836": "Parikshit Ghosh",
-  "550005635": "Anmol Sharma",
-  "223118537": "Akshay Aggarwal",
-  "250022036": "Shriya Gupta",
-  "550010987": "Arjita Sharma"
-
-    # Add more valid SSOs here as "sso.id": "Full Name"
-}
-
-# ============================================================
-# TOOL METADATA (icons, descriptions) — used on Home + Sidebar
-# ============================================================
-TOOL_INFO = {
-    "Saviynt Tool": {
-        "icon": "✅",
-        "tagline": "SOX Access Comparison Tool",
-        "description": "Upload Saviynt & dump files to run automated SOX access checks and comparisons.",
-    },
-    "CM Tool 1": {
-        "icon": "🔄",
-        "tagline": "Sequential Ticket Automation (Pulse)",
-        "description": "Automate login and bulk PDF download of Pulse change tickets.",
-    },
-    "CM Tool 2": {
-        "icon": "📝",
-        "tagline": "Change Management Report Generator",
-        "description": "Upload change ticket PDFs and generate a formatted Excel control-testing report.",
-    },
-}
-
-# ============================================================
-# SESSION STATE INIT (login/navigation only)
-# ============================================================
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-if "user_sso" not in st.session_state:
-    st.session_state.user_sso = None
-if "user_name" not in st.session_state:
-    st.session_state.user_name = None
-if "selected_tool" not in st.session_state:
-    st.session_state.selected_tool = "Home"
-if "login_attempts" not in st.session_state:
-    st.session_state.login_attempts = 0
-if "login_time" not in st.session_state:
-    st.session_state.login_time = None
+def now_ist() -> datetime.datetime:
+    return datetime.datetime.now(IST)
 
 
-def _get_initials(name: str) -> str:
-    parts = [p for p in name.strip().split(" ") if p]
-    if not parts:
-        return "?"
-    if len(parts) == 1:
-        return parts[0][0].upper()
-    return (parts[0][0] + parts[-1][0]).upper()
+# ============================================================================
+# SECTION 1 — AUTH: user database, authentication, registration, approval
+# ============================================================================
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+USERS_FILE = os.path.join(DATA_DIR, "users.json")
+
+ROLE_ADMIN = "Admin"
+ROLE_SOX   = "GEHC IT SOX Team"
+ROLE_USER  = "Regular User"
+ALL_ROLES = [ROLE_ADMIN, ROLE_SOX, ROLE_USER]
+
+APP_SAVIYNT       = "Access Reconcillation"
+APP_CM_AUTOMATION = "CM Automation"
+ALL_APPS = [APP_SAVIYNT, APP_CM_AUTOMATION]
+SOX_PROVISIONABLE_APPS = [APP_SAVIYNT, APP_CM_AUTOMATION]
+
+STATUS_PENDING  = "pending"
+STATUS_APPROVED = "approved"
+STATUS_REJECTED = "rejected"
 
 
-def _greeting() -> str:
-    hour = datetime.datetime.now().hour
-    if hour < 12:
-        return "Good morning"
-    elif hour < 17:
-        return "Good afternoon"
-    else:
-        return "Good evening"
+def _hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
-# ============================================================
-# LOGIN PAGE
-# ============================================================
-def login():
-    left, mid, right = st.columns([1, 1.3, 1])
-    with mid:
-        #st.markdown('<div class="login-card">', unsafe_allow_html=True)
-        st.markdown('<div class="login-logo">🚀</div>', unsafe_allow_html=True)
-        st.markdown('<div class="login-title">GEHC SOx Tools</div>', unsafe_allow_html=True)
-        st.markdown(
-            '<div class="login-subtitle">Sign in with your SSO ID to access Tools </div>',
-            unsafe_allow_html=True,
-        )
+def _seed_users():
+    return {
+        "admin1": {"name": "Portal Administrator", "email": "admin1@gehealthcare.com",
+                   "password_hash": _hash_password("Admin@123"), "role": ROLE_ADMIN,
+                   "apps": ALL_APPS.copy(), "active": True, "status": STATUS_APPROVED,
+                   "created_on": now_ist().isoformat()},
+    }
 
-        sso = st.text_input("SSO ID", key="login_sso_input", placeholder="e.g. john.doe")
 
-        col_a, col_b = st.columns([1, 1])
-        with col_a:
-            login_clicked = st.button("🔓 Login", use_container_width=True, type="primary")
-        with col_b:
-            clear_clicked = st.button("Clear", use_container_width=True)
+def _ensure_data_file():
+    os.makedirs(DATA_DIR, exist_ok=True)
+    if not os.path.exists(USERS_FILE):
+        with open(USERS_FILE, "w", encoding="utf-8") as f:
+            json.dump(_seed_users(), f, indent=2)
 
-        if clear_clicked:
-            st.session_state.login_sso_input = ""
+
+def load_users() -> dict:
+    _ensure_data_file()
+    with open(USERS_FILE, "r", encoding="utf-8") as f:
+        users = json.load(f)
+    needs_resave = False
+    for u in users.values():
+        cleaned = [a for a in u.get("apps", []) if a in ALL_APPS]
+        if cleaned != u.get("apps", []):
+            u["apps"] = cleaned
+            needs_resave = True
+        if "status" not in u:
+            u["status"] = STATUS_APPROVED
+            needs_resave = True
+    if needs_resave:
+        save_users(users)
+    return users
+
+
+def save_users(users: dict):
+    _ensure_data_file()
+    with open(USERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(users, f, indent=2)
+
+
+def get_user(sso_id: str):
+    return load_users().get(sso_id.strip().lower())
+
+
+def get_pending_users() -> dict:
+    return {sid: u for sid, u in load_users().items() if u.get("status") == STATUS_PENDING}
+
+
+def authenticate(sso_id: str, password: str):
+    if not sso_id or not sso_id.strip():
+        return False, "Please enter your SSO ID."
+    if not password:
+        return False, "Please enter your password."
+
+    sso_key = sso_id.strip().lower()
+    users = load_users()
+    user = users.get(sso_key)
+
+    if user is None:
+        return False, "Invalid SSO ID or Password. Please re-enter correct details."
+    if not user.get("active", True):
+        return False, "This account has been deactivated. Please contact your Admin."
+    if user.get("password_hash") != _hash_password(password):
+        return False, "Invalid SSO ID or Password. Please re-enter correct details."
+    if user.get("status") == STATUS_REJECTED:
+        return False, "Your account request was rejected by the Admin. Please contact your Admin team for more details."
+
+    user_out = dict(user)
+    user_out["sso_id"] = sso_key
+    return True, user_out
+
+
+def register_user(sso_id: str, name: str, email: str, password: str):
+    if not sso_id or not sso_id.strip():
+        return False, "Please enter an SSO ID."
+    if not name or not name.strip():
+        return False, "Please enter your full name."
+    if not email or not email.strip():
+        return False, "Please enter your email."
+    if not password or len(password) < 6:
+        return False, "Password must be at least 6 characters."
+
+    sso_key = sso_id.strip().lower()
+    users = load_users()
+    if sso_key in users:
+        return False, f"SSO ID '{sso_key}' is already registered. Please sign in, or use a different SSO ID."
+
+    users[sso_key] = {
+        "name": name.strip(), "email": email.strip(), "password_hash": _hash_password(password),
+        "role": ROLE_USER, "apps": [], "active": True, "status": STATUS_PENDING,
+        "created_on": now_ist().isoformat(),
+    }
+    save_users(users)
+    return True, "Your account request has been submitted and sent to the Admin for approval."
+
+
+def change_password(sso_id: str, current_password: str, new_password: str):
+    if not new_password or len(new_password) < 6:
+        return False, "New password must be at least 6 characters."
+    sso_key = sso_id.strip().lower()
+    users = load_users()
+    user = users.get(sso_key)
+    if user is None:
+        return False, "User not found."
+    if user.get("password_hash") != _hash_password(current_password):
+        return False, "Current password is incorrect."
+    user["password_hash"] = _hash_password(new_password)
+    save_users(users)
+    return True, "Password updated successfully."
+
+
+def add_or_update_user(sso_id: str, name: str, email: str, role: str, apps: list,
+                        password: str = None, active: bool = True, status: str = None):
+    sso_key = sso_id.strip().lower()
+    users = load_users()
+    existing = users.get(sso_key, {})
+    password_hash = existing.get("password_hash")
+    if password:
+        password_hash = _hash_password(password)
+    if not password_hash:
+        password_hash = _hash_password("Welcome@123")
+    users[sso_key] = {
+        "name": name.strip(), "email": email.strip(), "password_hash": password_hash,
+        "role": role, "apps": [a for a in apps if a in ALL_APPS], "active": active,
+        "status": status if status else existing.get("status", STATUS_APPROVED),
+        "created_on": existing.get("created_on", now_ist().isoformat()),
+    }
+    save_users(users)
+    return True
+
+
+def approve_user(sso_id: str, role: str, apps: list):
+    sso_key = sso_id.strip().lower()
+    users = load_users()
+    if sso_key not in users:
+        return False
+    users[sso_key]["role"] = role
+    users[sso_key]["apps"] = [a for a in apps if a in ALL_APPS]
+    users[sso_key]["status"] = STATUS_APPROVED
+    users[sso_key]["active"] = True
+    save_users(users)
+    return True
+
+
+def reject_user(sso_id: str):
+    sso_key = sso_id.strip().lower()
+    users = load_users()
+    if sso_key not in users:
+        return False
+    users[sso_key]["status"] = STATUS_REJECTED
+    users[sso_key]["apps"] = []
+    save_users(users)
+    return True
+
+
+def delete_user(sso_id: str):
+    sso_key = sso_id.strip().lower()
+    users = load_users()
+    if sso_key in users:
+        del users[sso_key]
+        save_users(users)
+        return True
+    return False
+
+
+def set_user_active(sso_id: str, active: bool):
+    sso_key = sso_id.strip().lower()
+    users = load_users()
+    if sso_key in users:
+        users[sso_key]["active"] = active
+        save_users(users)
+        return True
+    return False
+
+
+# ============================================================================
+# SECTION 2 — THEME
+# ============================================================================
+PRIMARY_PURPLE, PRIMARY_PURPLE_DARK, PRIMARY_PURPLE_DARKER = "#5B2A86", "#3B1D57", "#2A1440"
+PRIMARY_PURPLE_LIGHT, PRIMARY_PURPLE_SOFT, ACCENT_LILAC = "#F3EAFB", "#EFE3FA", "#8E5FB5"
+OFF_WHITE, TEXT_DARK, TEXT_MUTED, BORDER_SOFT = "#FAFAFC", "#1F1B24", "#6B6575", "#E4D9F0"
+
+
+def inject_global_css():
+    st.markdown(f"""
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+        * {{ box-sizing: border-box; }}
+        html, body, [class*="css"] {{ font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important; }}
+        .stApp {{ background: linear-gradient(180deg, {OFF_WHITE} 0%, #FFF 260px); }}
+        header[data-testid="stHeader"] {{ background-color: {PRIMARY_PURPLE}; box-shadow: 0 2px 8px rgba(91,42,134,0.25); }}
+        .block-container {{ padding-top: 2.6rem !important; padding-bottom: 3rem !important; max-width: 1180px; }}
+        section[data-testid="stSidebar"] {{ background: linear-gradient(180deg, {PRIMARY_PURPLE_DARKER}, {PRIMARY_PURPLE_DARK}); }}
+        section[data-testid="stSidebar"] > div:first-child {{ padding-top: 1.4rem; }}
+        section[data-testid="stSidebar"] * {{ color: #F3EEFA !important; }}
+        section[data-testid="stSidebar"] hr {{ border-top: 1px solid rgba(255,255,255,0.14) !important; margin: 1rem 0 !important; }}
+        .sidebar-user-card {{ background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); border-radius: 14px; padding: 18px 16px 16px 16px; margin-bottom: 6px; text-align: center; display: flex; flex-direction: column; align-items: center; }}
+        .sidebar-avatar {{ width: 54px; height: 54px; border-radius: 50%; background: linear-gradient(135deg, {ACCENT_LILAC}, {PRIMARY_PURPLE}); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 20px; color: #FFF; margin-bottom: 10px; border: 2px solid rgba(255,255,255,0.35); flex-shrink: 0; }}
+        .sidebar-name {{ font-weight: 700 !important; font-size: 15px !important; color: #FFF !important; margin-bottom: 3px; }}
+        .sidebar-sso {{ font-size: 11.5px !important; color: #D8C7EC !important; font-family: 'Courier New', monospace; margin-bottom: 8px; }}
+        .sidebar-role-pill {{ display: inline-block; background: #FFF !important; color: {PRIMARY_PURPLE_DARK} !important; border-radius: 999px; padding: 4px 14px; font-size: 11.5px !important; font-weight: 700 !important; }}
+        section[data-testid="stSidebar"] .sidebar-role-pill {{ color: {PRIMARY_PURPLE_DARK} !important; background: #FFFFFF !important; }}
+        section[data-testid="stSidebar"] .stRadio label {{ color: #F3EEFA !important; font-size: 14px !important; }}
+        section[data-testid="stSidebar"] div[data-testid="stExpander"] {{ background: rgba(255,255,255,0.06) !important; border: 1px solid rgba(255,255,255,0.16) !important; }}
+        section[data-testid="stSidebar"] div[data-testid="stExpander"] summary {{ background: transparent !important; color: #FFF !important; font-weight: 600 !important; }}
+        section[data-testid="stSidebar"] div[data-testid="stExpander"] * {{ color: #F3EEFA !important; }}
+        section[data-testid="stSidebar"] .stTextInput input {{ background: rgba(255,255,255,0.9) !important; color: #1F1B24 !important; }}
+        h1, h2, h3 {{ color: {PRIMARY_PURPLE_DARK} !important; font-weight: 700 !important; letter-spacing: -0.2px; }}
+        h3 {{ font-size: 1.22rem !important; margin-top: 0.2rem !important; }}
+        .stCaption, .stMarkdown p, label, .stTextInput label, .stTextArea label, .stSelectbox label, .stMultiSelect label, .stRadio label, .stCheckbox label {{ color: {TEXT_DARK} !important; }}
+        .stTextInput input, .stTextArea textarea, .stSelectbox div[data-baseweb="select"] > div {{ background: #FFF !important; color: {TEXT_DARK} !important; border: 1.5px solid {BORDER_SOFT} !important; border-radius: 10px !important; }}
+        .stTextInput input:focus, .stTextArea textarea:focus {{ border: 1.5px solid {PRIMARY_PURPLE} !important; box-shadow: 0 0 0 3px rgba(91,42,134,0.12) !important; }}
+        .stTextInput input::placeholder, .stTextArea textarea::placeholder {{ color: #9B93A8 !important; opacity: 1 !important; }}
+        .stButton > button, div[data-testid="stFormSubmitButton"] button {{ background: linear-gradient(135deg, {PRIMARY_PURPLE}, {PRIMARY_PURPLE_DARK}) !important; color: #FFF !important; border: none !important; border-radius: 10px !important; font-weight: 600 !important; padding: 0.55rem 1.2rem !important; width: 100%; box-shadow: 0 2px 6px rgba(91,42,134,0.25); transition: all 0.15s ease-in-out; min-height: 42px; }}
+        .stButton > button:hover, div[data-testid="stFormSubmitButton"] button:hover {{ box-shadow: 0 4px 12px rgba(91,42,134,0.35); transform: translateY(-1px); }}
+        .stDownloadButton > button {{ background: #FFF !important; color: {PRIMARY_PURPLE_DARK} !important; border: 1.5px solid {PRIMARY_PURPLE} !important; border-radius: 10px !important; font-weight: 600 !important; }}
+        div[data-testid="column"] .stButton > button {{ width: 100%; }}
+        div[data-baseweb="tab-list"] {{ gap: 6px; border-bottom: 1px solid {BORDER_SOFT}; }}
+        button[data-baseweb="tab"] {{ font-weight: 600 !important; color: {TEXT_MUTED} !important; font-size: 14.5px !important; padding: 10px 6px !important; }}
+        button[data-baseweb="tab"][aria-selected="true"] {{ color: {PRIMARY_PURPLE_DARK} !important; }}
+        div[data-baseweb="tab-highlight"] {{ background-color: {PRIMARY_PURPLE} !important; height: 3px !important; }}
+        div[data-testid="stAlert"] {{ border: none !important; border-left: 4px solid {PRIMARY_PURPLE} !important; border-radius: 10px !important; background: {PRIMARY_PURPLE_SOFT} !important; color: {TEXT_DARK} !important; }}
+        div[data-testid="stExpander"] {{ border: 1px solid {BORDER_SOFT} !important; border-radius: 12px !important; background: #FFF !important; box-shadow: 0 1px 4px rgba(91,42,134,0.05); overflow: hidden; }}
+        div[data-testid="stExpander"] summary {{ background: {PRIMARY_PURPLE_SOFT} !important; color: {PRIMARY_PURPLE_DARK} !important; font-weight: 600 !important; }}
+        div[data-testid="stExpander"] div[data-testid="stExpanderDetails"], div[data-testid="stExpander"] div[data-testid="stExpanderDetails"] p, div[data-testid="stExpander"] div[data-testid="stExpanderDetails"] li {{ color: {TEXT_DARK} !important; }}
+        div[data-testid="stVerticalBlockBorderWrapper"] {{ background: #FFF !important; border: 1px solid {BORDER_SOFT} !important; border-radius: 18px !important; box-shadow: 0 8px 28px rgba(91,42,134,0.10) !important; padding: 0.3rem 0.3rem !important; }}
+        div[data-testid="stDataFrame"] {{ border: 1px solid {BORDER_SOFT} !important; border-radius: 12px !important; overflow: hidden; }}
+        div[data-testid="stMetric"] {{ background: #FFF; border: 1px solid {BORDER_SOFT}; border-radius: 12px; padding: 14px 16px 10px 16px; box-shadow: 0 1px 4px rgba(91,42,134,0.05); text-align: center; }}
+        div[data-testid="stMetricLabel"] {{ color: {TEXT_MUTED} !important; font-weight: 600 !important; font-size: 12px !important; text-transform: uppercase; justify-content: center !important; }}
+        div[data-testid="stMetricValue"] {{ color: {PRIMARY_PURPLE_DARK} !important; font-weight: 800 !important; justify-content: center !important; }}
+        hr {{ border: none !important; border-top: 1px solid {BORDER_SOFT} !important; margin: 1.3rem 0 !important; }}
+        .portal-header-banner {{ background: linear-gradient(120deg, {PRIMARY_PURPLE}, {PRIMARY_PURPLE_DARK}); color: #FFF; border-radius: 16px; padding: 24px 28px; margin-bottom: 22px; display: flex; align-items: center; gap: 16px; box-shadow: 0 6px 20px rgba(91,42,134,0.28); }}
+        .portal-header-icon {{ width: 50px; height: 50px; border-radius: 14px; background: rgba(255,255,255,0.16); border: 1px solid rgba(255,255,255,0.35); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 19px; color: #FFF; flex-shrink: 0; }}
+        /* Scoped fix: only columns that directly wrap a dashboard .app-tile card
+           get stretched to equal height -- this no longer affects file-uploader
+           columns, the tool top-bar columns, or any other column layout in the
+           app (which was the root cause of the misalignment seen previously). */
+        div[data-testid="column"]:has(.app-tile) {{ display: flex; }}
+        div[data-testid="column"]:has(.app-tile) > div {{ width: 100%; }}
+        .app-tile {{ background: #FFF; border: 1px solid {BORDER_SOFT}; border-radius: 16px; padding: 24px 20px; text-align: center; box-shadow: 0 3px 12px rgba(91,42,134,0.07); transition: all 0.18s ease-in-out; display: flex; flex-direction: column; align-items: center; height: 100%; min-height: 210px; }}
+
+        /* Normalize widget label height so columns with a longer (2-line) label
+           next to columns with a short (1-line) label still start their input/
+           button at the exact same vertical position -- fixes misaligned
+           multi-column file-uploader rows (e.g. in the Saviynt tool) without
+           touching that tool's own code. */
+        div[data-testid="stWidgetLabel"] {{ min-height: 44px; display: flex; align-items: flex-end; }}
+        div[data-testid="stFileUploader"] section {{ margin-top: 0 !important; }}
+        .app-tile:hover {{ box-shadow: 0 10px 26px rgba(91,42,134,0.18); transform: translateY(-2px); border-color: {PRIMARY_PURPLE}; }}
+        .app-tile-icon-badge {{ width: 54px; height: 54px; border-radius: 14px; background: linear-gradient(135deg, {PRIMARY_PURPLE_SOFT}, #FFF); border: 1px solid {BORDER_SOFT}; display: flex; align-items: center; justify-content: center; font-size: 25px; margin-bottom: 12px; flex-shrink: 0; }}
+        .app-tile-title {{ font-weight: 700; font-size: 16px; color: {TEXT_DARK}; margin-bottom: 8px; }}
+        .app-tile-desc {{ font-size: 13px; color: {TEXT_MUTED}; line-height: 1.5; flex-grow: 1; }}
+        .role-badge {{ display: inline-block; background: {PRIMARY_PURPLE_LIGHT} !important; color: {PRIMARY_PURPLE_DARK} !important; border: 1px solid {PRIMARY_PURPLE}; border-radius: 999px; padding: 3px 14px; font-size: 12px; font-weight: 700; }}
+        .breadcrumb-text {{ font-size: 14px; color: {TEXT_MUTED}; padding-top: 10px; }}
+        .breadcrumb-text .current {{ color: {PRIMARY_PURPLE_DARK}; font-weight: 700; }}
+        .access-denied-card {{ background: #FFF5F5; border-left: 5px solid #D64545; border-radius: 14px; padding: 22px 26px; margin: 10px 0 20px 0; }}
+        .pending-card {{ background: {PRIMARY_PURPLE_SOFT}; border-left: 5px solid {PRIMARY_PURPLE}; border-radius: 14px; padding: 22px 26px; margin: 10px 0 20px 0; }}
+        .request-card {{ border: 1px solid {BORDER_SOFT}; border-radius: 14px; padding: 16px 18px; margin-bottom: 14px; background: #FFFFFF; }}
+        .pending-badge {{ display: inline-block; background: #D64545; color: #FFF; border-radius: 999px; font-size: 10.5px; font-weight: 700; padding: 1px 7px; margin-left: 6px; vertical-align: middle; }}
+        </style>
+        """, unsafe_allow_html=True)
+
+
+def render_header_banner(title: str, subtitle: str = ""):
+    st.markdown(f"""
+        <div class="portal-header-banner">
+            <div class="portal-header-icon">GE</div>
+            <div>
+                <div style="color:#E4D2F5;font-size:12px;letter-spacing:1.1px;text-transform:uppercase;font-weight:600;">{subtitle}</div>
+                <div style="color:#FFF;font-size:24px;font-weight:800;line-height:1.3;">{title}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+
+# ============================================================================
+# SECTION 3 — LOGIN PAGE (Sign In + Create Account)
+# ============================================================================
+
+def _render_sign_in_tab():
+    with st.form("login_form", clear_on_submit=False):
+        sso_id = st.text_input("SSO ID", key="login_sso_input")
+        password = st.text_input("Password", type="password", placeholder="Enter your password", key="login_pwd_input")
+        submitted = st.form_submit_button("Sign In", use_container_width=True)
+
+    if submitted:
+        ok, result = authenticate(sso_id, password)
+        if ok:
+            st.session_state.authenticated = True
+            st.session_state.current_user = result
+            st.session_state.plain_password = password
+            st.session_state.login_error = ""
             st.rerun()
+        else:
+            st.session_state.login_error = result
 
-        if login_clicked:
-            entered_sso = sso.strip()
-            if entered_sso and entered_sso in VALID_SSO_DICT:
-                st.session_state.authenticated = True
-                st.session_state.user_sso = entered_sso
-                st.session_state.user_name = VALID_SSO_DICT[entered_sso]
-                st.session_state.login_attempts = 0
-                st.session_state.login_time = datetime.datetime.now()
-                st.session_state.selected_tool = "Home"
-                st.success(f"✅ Welcome, {st.session_state.user_name}! Redirecting...")
-                time.sleep(0.6)
-                st.rerun()
+    if st.session_state.get("login_error"):
+        st.error(st.session_state.login_error)
+        st.caption("Please re-enter your correct SSO ID and Password and try again.")
+
+
+def _render_create_account_tab():
+    st.markdown(f"<p style='color:{TEXT_MUTED};font-size:13px;margin-top:-6px;margin-bottom:14px;'>Create your SSO account below. Your request will be sent to the Admin for approval before you can access any application.</p>", unsafe_allow_html=True)
+    with st.form("register_form", clear_on_submit=False):
+        reg_sso_id = st.text_input("Choose an SSO ID *", key="reg_sso_input")
+        reg_name = st.text_input("Full Name *", key="reg_name_input")
+        reg_email = st.text_input("Email *", key="reg_email_input")
+        reg_password = st.text_input("Password *", type="password", placeholder="At least 6 characters", key="reg_pwd_input")
+        reg_password_confirm = st.text_input("Confirm Password *", type="password", key="reg_pwd_confirm_input")
+        reg_submitted = st.form_submit_button("Create Account", use_container_width=True)
+
+    if reg_submitted:
+        if reg_password != reg_password_confirm:
+            st.session_state.register_error = "Passwords do not match. Please re-enter."
+            st.session_state.register_success = ""
+        else:
+            ok, msg = register_user(reg_sso_id, reg_name, reg_email, reg_password)
+            if ok:
+                st.session_state.register_success = msg
+                st.session_state.register_error = ""
             else:
-                st.session_state.login_attempts += 1
-                st.error(
-                    "❌ SSO not recognized. Please re-enter correct details. "
-                    f"(Attempt {st.session_state.login_attempts})"
-                )
+                st.session_state.register_error = msg
+                st.session_state.register_success = ""
 
-        with st.expander("ℹ️ Need help logging in?"):
-            st.write(
-                "- Enter your organizational SSO ID exactly as issued (case-sensitive).\n"
-                "- If your SSO isn't recognized, contact your portal administrator "
-                "to be added to the access list.\n"
-                "- This portal grants access to: **Saviynt Tool**, **CM Tool 1**, and **CM Tool 2**."
+    if st.session_state.get("register_error"):
+        st.error(st.session_state.register_error)
+    if st.session_state.get("register_success"):
+        st.success(f"✅ {st.session_state.register_success}")
+        st.info("You may sign in now to check your approval status at any time from the **Sign In** tab.")
+
+
+def render_login_page():
+    if "register_error" not in st.session_state:
+        st.session_state.register_error = ""
+    if "register_success" not in st.session_state:
+        st.session_state.register_success = ""
+
+    st.markdown("<div style='height:2rem;'></div>", unsafe_allow_html=True)
+    col_l, col_mid, col_r = st.columns([1, 1.3, 1])
+    with col_mid:
+        st.markdown(f"""
+            <div style="text-align:center;margin-bottom:20px;">
+                <div style="width:62px;height:62px;border-radius:16px;margin:0 auto 12px auto;background:linear-gradient(135deg,{PRIMARY_PURPLE},{PRIMARY_PURPLE_DARK});display:flex;align-items:center;justify-content:center;font-weight:800;font-size:23px;color:#FFF;box-shadow:0 8px 20px rgba(91,42,134,0.30);">GE</div>
+                <div style="font-size:21px;font-weight:800;color:{PRIMARY_PURPLE_DARK};">GEHC SOx Tool Portal</div>
+                <div style="font-size:12.5px;color:{TEXT_MUTED};text-transform:uppercase;letter-spacing:0.4px;margin-top:2px;">GEHC IT SOX Team</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with st.container(border=True):
+            tab_signin, tab_register = st.tabs(["🔐 Sign In", "📝 Create Account"])
+            with tab_signin:
+                st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
+                _render_sign_in_tab()
+            with tab_register:
+                st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
+                _render_create_account_tab()
+
+        with st.expander("How to Access and Use the Tool"):
+            st.markdown(
+                "- If you already have an account, simply log in to start using the platform.\n"
+                "- If you do not have an account, create one and submit your registration request. An administrator will review and approve your request. Once approved, you can log in and access the platform.\n"
+                "- After logging in, select the tool you want to use and get started."
             )
 
-        st.markdown("</div>", unsafe_allow_html=True)
 
-        st.markdown(
-            "<p style='text-align:center; color:#475569; font-size:0.78rem; margin-top:0.8rem;'>"
-            "🔒 Secure internal access only</p>",
-            unsafe_allow_html=True,
-        )
+# ============================================================================
+# SECTION 4 — ADMIN PORTAL (Admin role ONLY)
+# ============================================================================
+
+def _users_to_dataframe(users: dict) -> pd.DataFrame:
+    rows = [{"SSO ID": sid, "Name": u.get("name",""), "Email": u.get("email",""),
+             "Role": u.get("role",""), "Apps": ", ".join(u.get("apps",[])),
+             "Status": u.get("status", STATUS_APPROVED).capitalize(),
+             "Active": u.get("active", True)}
+            for sid, u in users.items()]
+    cols = ["SSO ID","Name","Email","Role","Apps","Status","Active"]
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=cols)
 
 
-# ============================================================
-# LOGOUT
-# ============================================================
-def logout():
-    if st.sidebar.button("🚪 Logout", use_container_width=True):
-        st.session_state.authenticated = False
-        st.session_state.user_sso = None
-        st.session_state.user_name = None
-        st.session_state.selected_tool = "Home"
+def _render_pending_requests_section(users: dict):
+    pending = {sid: u for sid, u in users.items() if u.get("status") == STATUS_PENDING}
+    badge = f"<span class='pending-badge'>{len(pending)} NEW</span>" if pending else ""
+    st.markdown(f"<h3>🔔 Pending Approval Requests {badge}</h3>", unsafe_allow_html=True)
+
+    if not pending:
+        st.info("No pending account requests right now.")
+        return
+
+    for sid, u in pending.items():
+        with st.container(border=True):
+            col_info, col_meta = st.columns([3, 2])
+            with col_info:
+                st.markdown(f"**{u.get('name','')}**  \n`{sid}` &nbsp;·&nbsp; {u.get('email','')}")
+            with col_meta:
+                st.caption(f"Requested on {str(u.get('created_on',''))[:10]}")
+
+            with st.form(f"approve_form_{sid}"):
+                fc1, fc2 = st.columns(2)
+                with fc1:
+                    assign_role = st.selectbox("Assign Role", options=ALL_ROLES, index=ALL_ROLES.index(ROLE_USER), key=f"role_select_{sid}")
+                with fc2:
+                    assign_apps = st.multiselect("Assign Application Access", options=ALL_APPS, key=f"apps_select_{sid}")
+                bc1, bc2 = st.columns(2)
+                with bc1:
+                    approve_clicked = st.form_submit_button("✅ Approve", use_container_width=True)
+                with bc2:
+                    reject_clicked = st.form_submit_button("🚫 Reject", use_container_width=True)
+
+            if approve_clicked:
+                approve_user(sid, assign_role, assign_apps)
+                st.success(f"✅ `{sid}` approved with role '{assign_role}' and access to: {', '.join(assign_apps) or '(no apps selected)'}.")
+                st.rerun()
+            if reject_clicked:
+                reject_user(sid)
+                st.warning(f"🚫 `{sid}` has been rejected.")
+                st.rerun()
+
+    st.markdown("---")
+
+
+def render_admin_portal():
+    current_user = st.session_state.current_user
+    current_role = current_user.get("role")
+
+    if current_role != ROLE_ADMIN:
+        render_header_banner("Access Restricted", "Admin Portal")
+        st.markdown(f"""
+            <div class="access-denied-card">
+                <div style="font-size:17px;font-weight:700;color:#B33A3A;">🚫 You don't have permission to view this page</div>
+                <div style="color:{TEXT_MUTED};font-size:14px;">The Admin Portal is restricted to <b>Administrator</b> accounts only. Your current role is <b>{current_role}</b>.</div>
+            </div>
+            """, unsafe_allow_html=True)
+        st.session_state.portal_view = "dashboard"
+        if st.button("⬅ Return to My Dashboard"):
+            st.rerun()
+        return
+
+    render_header_banner("Admin Portal", "User & Access Management")
+    st.markdown(f"Signed in as **{current_user.get('name')}** (<span class='role-badge'>{current_role}</span>)", unsafe_allow_html=True)
+    st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+
+    users = load_users()
+    _render_pending_requests_section(users)
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Total Users", len(users))
+    m2.metric("Admins", sum(1 for u in users.values() if u.get("role") == ROLE_ADMIN))
+    m3.metric("SOX Team", sum(1 for u in users.values() if u.get("role") == ROLE_SOX))
+    m4.metric("Regular Users", sum(1 for u in users.values() if u.get("role") == ROLE_USER))
+    m5.metric("Active Accounts", sum(1 for u in users.values() if u.get("active", True)))
+
+    st.markdown("---")
+    st.subheader("👥 User Directory")
+    st.dataframe(_users_to_dataframe(users), use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    st.subheader("➕ Add / Update User or Admin")
+    _render_admin_add_user_form(users)
+
+    st.markdown("---")
+    st.subheader("⚙️ Manage Existing Users")
+    _render_manage_existing_users(users, current_role)
+
+
+def _render_admin_add_user_form(users: dict):
+    with st.form("admin_add_user_form", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            sso_id = st.text_input("SSO ID *", placeholder="e.g. jsmith45")
+            name = st.text_input("Full Name *", placeholder="e.g. John Smith")
+        with col2:
+            email = st.text_input("Email *", placeholder="e.g. jsmith45@gehealthcare.com")
+            role = st.selectbox("Role *", options=ALL_ROLES)
+        apps = st.multiselect("Application Access (multiple allowed)", options=ALL_APPS)
+        password = st.text_input("Temporary Password (leave blank for default)", type="password")
+        active = st.checkbox("Active", value=True)
+        submitted = st.form_submit_button("Save User", use_container_width=True)
+    if submitted:
+        if not sso_id or not name or not email:
+            st.warning("Please fill in SSO ID, Name, and Email.")
+        else:
+            add_or_update_user(sso_id=sso_id, name=name, email=email, role=role, apps=apps, password=password if password else None, active=active, status=STATUS_APPROVED)
+            st.success(f"User `{sso_id.strip().lower()}` saved successfully with role '{role}'.")
+            st.rerun()
+
+
+def _render_manage_existing_users(users: dict, current_role: str):
+    if not users:
+        st.info("No users in the directory yet.")
+        return
+    selected_sso = st.selectbox("Select a user to manage", options=list(users.keys()), key="manage_user_select")
+    user = users[selected_sso]
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown(f"**Name:** {user.get('name')}")
+        st.markdown(f"**Email:** {user.get('email')}")
+    with col2:
+        st.markdown(f"**Role:** {user.get('role')}")
+        st.markdown(f"**Apps:** {', '.join(user.get('apps', [])) or '(none)'}")
+    with col3:
+        status_val = user.get("status", STATUS_APPROVED)
+        status_icon = {"approved": "🟢", "pending": "🟡", "rejected": "🔴"}.get(status_val, "⚪")
+        st.markdown(f"**Status:** {status_icon} {status_val.capitalize()}")
+
+    with st.expander("✏️ Edit this user", expanded=False):
+        with st.form(f"edit_user_form_{selected_sso}"):
+            new_name = st.text_input("Full Name", value=user.get("name", ""))
+            new_email = st.text_input("Email", value=user.get("email", ""))
+            new_role = st.selectbox("Role", options=ALL_ROLES, index=ALL_ROLES.index(user.get("role")) if user.get("role") in ALL_ROLES else 0)
+            new_apps = st.multiselect("Application Access", options=ALL_APPS, default=user.get("apps", []))
+            new_password = st.text_input("Reset Password (leave blank to keep current)", type="password")
+            save_edit = st.form_submit_button("Save Changes", use_container_width=True)
+        if save_edit:
+            add_or_update_user(sso_id=selected_sso, name=new_name, email=new_email, role=new_role, apps=new_apps, password=new_password if new_password else None, active=user.get("active", True), status=user.get("status", STATUS_APPROVED))
+            st.success(f"User `{selected_sso}` updated successfully.")
+            st.rerun()
+
+    colA, colB = st.columns(2)
+    with colA:
+        if user.get("active", True):
+            if st.button("🔒 Deactivate User", key=f"deact_{selected_sso}"):
+                set_user_active(selected_sso, False)
+                st.success(f"User `{selected_sso}` deactivated.")
+                st.rerun()
+        else:
+            if st.button("🔓 Reactivate User", key=f"react_{selected_sso}"):
+                set_user_active(selected_sso, True)
+                st.success(f"User `{selected_sso}` reactivated.")
+                st.rerun()
+    with colB:
+        if st.button("🗑️ Delete User", key=f"del_{selected_sso}"):
+            if selected_sso == st.session_state.current_user.get("sso_id"):
+                st.error("You cannot delete your own currently logged-in account.")
+            else:
+                delete_user(selected_sso)
+                st.success(f"User `{selected_sso}` deleted.")
+                st.rerun()
+
+
+# ============================================================================
+# SECTION 5 — APPLICATION DASHBOARD
+# ============================================================================
+APP_ICONS = {APP_SAVIYNT: "🛡️", APP_CM_AUTOMATION: "⚙️"}
+APP_DESCRIPTIONS = {
+    APP_SAVIYNT: "SOX Access Comparison Tool will validate Saviynt access requests, approvals, and role provisioning.",
+    APP_CM_AUTOMATION: "Change Management Automation Tool will auto-download Pulse ticket PDFs/attachments and generate compliance reports.",
+}
+
+
+def render_pending_screen():
+    user = st.session_state.current_user
+    render_header_banner("Approval Pending", f"Welcome, {user.get('name')}")
+    st.markdown(f"""
+        <div class="pending-card">
+            <div style="font-size:17px;font-weight:700;color:{PRIMARY_PURPLE_DARK};margin-bottom:6px;">⏳ Your account request has been sent to the Admin for approval</div>
+            <div style="color:{TEXT_MUTED};font-size:14px;">An Administrator needs to review your sign-up, assign you a role, and grant application access before you can use any tool. You'll get full access automatically once approved -- no need to sign up again.</div>
+        </div>
+        """, unsafe_allow_html=True)
+    if st.button("🔄 Check Approval Status"):
         st.rerun()
 
 
-# ============================================================
-# PAGE BANNER helper (per-tool header)
-# ============================================================
-def render_page_banner(title: str, subtitle: str, icon: str):
-    st.markdown(
-        f"""
-        <div class="page-banner">
-            <h2>{icon} {title}</h2>
-            <p>{subtitle}</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+def _render_tool_top_bar(active_tool: str):
+    st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
+    col_back, col_crumb = st.columns([1.1, 4], gap="medium")
+    with col_back:
+        if st.button("⬅ Back to Dashboard", key="back_to_dashboard_top", use_container_width=True):
+            st.session_state.active_tool = None
+            st.rerun()
+    with col_crumb:
+        st.markdown(
+            f"""
+            <div style="display:flex;align-items:center;height:42px;">
+                <span class="breadcrumb-text" style="padding-top:0;">
+                    Application Dashboard &nbsp;/&nbsp; <span class="current">{active_tool}</span>
+                </span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    st.markdown("---")
 
 
-# ============================================================
-# ============================================================
-#   TOOL 1: SAVIYNT TOOL  (SOX Access Comparison Tool)
-# ============================================================
-# ============================================================
-def run_saviynt_tool():
+def _render_tool_page(active_tool: str):
+    _render_tool_top_bar(active_tool)
+    render_header_banner(active_tool, "Application")
+    st.markdown("---")
+    if active_tool == APP_SAVIYNT:
+        render_saviynt_tool()
+    elif active_tool == APP_CM_AUTOMATION:
+        render_cm_automation_tool()
 
-    # =========================================
-    #  Page config & basic styling
-    # =========================================
 
-    st.markdown(
-        """
-        <style>
-        .main {
-            background-color: #0b1120;
-            color: #e5e7eb;
-        }
-        .report-box {
-            background-color: #020617;
-            padding: 1.2rem 1.5rem;
-            border-radius: 0.5rem;
-            border: 1px solid #1f2937;
-            box-shadow: 0 1px 3px rgba(15, 23, 42, 0.6);
-        }
-        .stButton>button {
-            border-radius: 0.4rem;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
+def render_dashboard():
+    user = st.session_state.current_user
+    user_apps = [a for a in user.get("apps", []) if a in ALL_APPS]
+    active_tool = st.session_state.get("active_tool")
 
-    st.title("SOX Access Comparison Tool")
+    if active_tool and active_tool in user_apps:
+        _render_tool_page(active_tool)
+        return
+
+    render_header_banner("Application Dashboard", f"Welcome, {user.get('name')}")
+    st.markdown(f"Role: <span class='role-badge'>{user.get('role')}</span>", unsafe_allow_html=True)
+    st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
+
+    if not user_apps:
+        st.warning("You currently have no application access assigned. Please contact your Admin or the GEHC IT SOX Team to request access.")
+        return
+
+    st.subheader("Your Applications")
+    cols = st.columns(2) if len(user_apps) <= 2 else st.columns(3)
+    for i, app_name in enumerate(user_apps):
+        col = cols[i % len(cols)]
+        with col:
+            st.markdown(f"""
+                <div class="app-tile">
+                    <div class="app-tile-icon-badge">{APP_ICONS.get(app_name, "📦")}</div>
+                    <div class="app-tile-title">{app_name}</div>
+                    <div class="app-tile-desc">{APP_DESCRIPTIONS.get(app_name, "")}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+            if st.button(f"Open {app_name}", key=f"open_{app_name}", use_container_width=True):
+                st.session_state.active_tool = app_name
+                st.rerun()
+
+
+# ============================================================================
+# SECTION 6: SAVIYNT TOOL (SOX Access Comparison Tool)
+# ============================================================================
+
+
+def render_saviynt_tool():
+    st.markdown("### 🛡️ SOX Access Comparison Tool (Saviynt)")
     st.caption("Upload the Analytics Summary and Dump files, run checks, and see per‑check summaries.")
+
 
     # =========================================
     #  Helper functions
@@ -1586,13 +1897,14 @@ def run_saviynt_tool():
     else:
         st.info("Run at least one check to enable combined download.")
 
-# ============================================================
-# ============================================================
-#   TOOL 2: CM TOOL 1  (Sequential Ticket Automation - Pulse)
-# ============================================================
-# ============================================================
-def run_cm_tool_1():
 
+
+# ============================================================================
+# SECTION 7: CM AUTOMATION TOOL (Change Management Automation)
+# ============================================================================
+
+
+def render_cm_automation_tool():
 
 
     TICKET_TYPE_LABELS = {
@@ -1603,15 +1915,17 @@ def run_cm_tool_1():
     LOG_FILE_PATH = os.path.join(os.getcwd(), "automation_log.txt")
 
     defaults = {
-        "step": 0,
-        "sso_id": "",
-        "password": "",
-        "platform": "Pulse Tickets",
-        "ticket_type_key": "Yes",
-        "tickets": [],
-        "logs": [],
-        "download_dir": None,
-        "headless": True,
+        "cm_step": 0,
+        "cm_sso_id": "",
+        "cm_password": "",
+        "cm_platform": "Pulse Tickets",
+        "cm_ticket_type_key": "Yes",
+        "cm_tickets": [],
+        "cm_logs": [],
+        "cm_download_dir": None,
+        "cm_headless": True,
+        "cm_excel_bytes": None,
+        "cm_excel_filename": "change_management_report.xlsx",
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -1621,9 +1935,41 @@ def run_cm_tool_1():
     _image_placeholder = None
 
 
+    def render_process_log(placeholder, logs):
+        """Render the process log inside a scrollable, purple-outlined box (display-only helper)."""
+        if placeholder is None:
+            return
+        log_text = "\n".join(logs[-400:])
+        escaped = (
+            log_text.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+        placeholder.markdown(
+            f'''
+            <div style="
+                background-color:#FFFFFF;
+                border:1.5px solid #5B2A86;
+                outline:1.5px solid #5B2A86;
+                outline-offset:-1.5px;
+                border-radius:8px;
+                padding:10px 12px;
+                height:400px;
+                overflow-y:auto;
+                font-family:monospace;
+                font-size:13px;
+                color:#2B2B2B;
+                white-space:pre-wrap;
+                word-break:break-word;
+            ">{escaped}</div>
+            ''',
+            unsafe_allow_html=True,
+        )
+
+
     def log(msg: str):
-        timestamped = f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {msg}"
-        st.session_state.logs.append(msg)
+        timestamped = f"[{now_ist().strftime('%H:%M:%S')}] {msg}"
+        st.session_state.cm_logs.append(msg)
         print(msg)
         try:
             with open(LOG_FILE_PATH, "a", encoding="utf-8") as f:
@@ -1631,7 +1977,7 @@ def run_cm_tool_1():
         except Exception as e:
             print(f"Could not write to log file: {e}")
         if _log_placeholder is not None:
-            _log_placeholder.text("\n".join(st.session_state.logs[-400:]))
+            render_process_log(_log_placeholder, st.session_state.cm_logs)
 
 
     def show_screenshot(driver, caption: str = ""):
@@ -1729,6 +2075,35 @@ def run_cm_tool_1():
     return deepAnyVisible(arguments[0]);
     """
 
+    DEEP_TEXT_CONTAINS_JS = """
+    function getDirectText(el) {
+        let text = '';
+        for (const node of el.childNodes) {
+            if (node.nodeType === Node.TEXT_NODE) { text += node.textContent; }
+        }
+        return text.trim();
+    }
+    function isVisible(el) {
+        return !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+    }
+    function deepFindByTextContains(text, root) {
+        root = root || document;
+        const all = root.querySelectorAll('*');
+        for (const el of all) {
+            if (el.shadowRoot) {
+                const res = deepFindByTextContains(text, el.shadowRoot);
+                if (res) return res;
+            }
+            const t = getDirectText(el);
+            if (t.indexOf(text) !== -1 && isVisible(el)) {
+                return el;
+            }
+        }
+        return null;
+    }
+    return deepFindByTextContains(arguments[0]);
+    """
+
 
     def deep_find_all(driver, css_selector):
         try:
@@ -1751,6 +2126,13 @@ def run_cm_tool_1():
     def deep_find_by_text(driver, text):
         try:
             return driver.execute_script(DEEP_TEXT_JS, text)
+        except Exception:
+            return None
+
+
+    def deep_find_by_text_contains(driver, text):
+        try:
+            return driver.execute_script(DEEP_TEXT_CONTAINS_JS, text)
         except Exception:
             return None
 
@@ -1816,6 +2198,45 @@ def run_cm_tool_1():
 
         driver.switch_to.default_content()
         return None
+
+
+    def find_all_across_frames(driver, finder_fn, max_depth=3):
+        """Like find_across_frames, but collects ALL matches from every frame
+        (top-level + every nested iframe, found via shadow-DOM-aware search).
+        NOTE: elements returned here may go stale once the driver switches
+        frames again -- do not read attributes off them after calling this."""
+        results = []
+
+        def collect():
+            try:
+                found = finder_fn(driver)
+            except Exception:
+                found = None
+            if found:
+                results.extend(found)
+
+        driver.switch_to.default_content()
+        collect()
+
+        def search_frames(depth):
+            if depth > max_depth:
+                return
+            frames = deep_find_all(driver, "iframe")
+            for frame in frames:
+                try:
+                    driver.switch_to.frame(frame)
+                except Exception:
+                    continue
+                collect()
+                search_frames(depth + 1)
+                try:
+                    driver.switch_to.parent_frame()
+                except Exception:
+                    driver.switch_to.default_content()
+
+        search_frames(1)
+        driver.switch_to.default_content()
+        return results
 
 
     # ==========================================================
@@ -1958,7 +2379,6 @@ def run_cm_tool_1():
             found = shutil.which(name)
             if found:
                 return found
-        # Last resort: search the filesystem (covers unusual apt install locations)
         found = _filesystem_search(["chromium", "chromium-browser", "google-chrome*"])
         return found
 
@@ -1976,18 +2396,16 @@ def run_cm_tool_1():
         found = shutil.which("chromedriver")
         if found:
             return found
-        # Last resort: search the filesystem
         found = _filesystem_search(["chromedriver"])
         if found:
             try:
-                os.chmod(found, 0o755)  # ensure it's executable
+                os.chmod(found, 0o755)
             except Exception:
                 pass
         return found
 
 
     def run_environment_diagnostics():
-        """Logs what's actually installed, to make future failures easy to diagnose."""
         log("=== Environment diagnostics ===")
         try:
             which_chromium = shutil.which("chromium") or shutil.which("chromium-browser")
@@ -2070,6 +2488,7 @@ def run_cm_tool_1():
 
         if driver is None:
             try:
+                from webdriver_manager.chrome import ChromeDriverManager
                 service = Service(ChromeDriverManager().install())
                 driver = webdriver.Chrome(service=service, options=options)
                 log("Using webdriver-manager driver")
@@ -2199,9 +2618,304 @@ def run_cm_tool_1():
 
 
     # ==========================================================
+    # Per-ticket folder helpers
+    # ==========================================================
+    def sanitize_ticket_name(ticket: str) -> str:
+        cleaned = "".join(c for c in ticket.strip() if c.isalnum() or c in ("-", "_"))
+        return cleaned or "ticket"
+
+
+    def get_ticket_folder(download_dir: str, ticket: str) -> str:
+        """Every ticket gets its own dedicated folder: <download_dir>/<TICKET>/
+        The ticket's PDF goes directly inside it, and its attachments go inside
+        a further 'attachments' subfolder."""
+        folder = os.path.join(download_dir, sanitize_ticket_name(ticket))
+        os.makedirs(folder, exist_ok=True)
+        return folder
+
+
+    def get_ticket_attachments_folder(download_dir: str, ticket: str) -> str:
+        folder = os.path.join(get_ticket_folder(download_dir, ticket), "attachments")
+        os.makedirs(folder, exist_ok=True)
+        return folder
+
+
+    def cleanup_empty_attachments_folder(attachments_dir: str):
+        """If a ticket genuinely had zero attachments, the 'attachments'
+        subfolder was still created up-front (needed as a destination in case
+        there WERE any). Remove it afterward if it ended up empty, so tickets
+        with no attachments don't leave a clutter empty folder behind in the
+        final ZIP/download listing."""
+        try:
+            if os.path.isdir(attachments_dir) and not os.listdir(attachments_dir):
+                os.rmdir(attachments_dir)
+        except Exception:
+            pass
+
+
+    def build_attachment_filename(ticket, original_name):
+        """Prefix the ticket number onto the attachment's original filename,
+        unless it's already present (ServiceNow sometimes already includes it)."""
+        original_name = (original_name or "attachment").strip()
+        if original_name.upper().startswith(ticket.strip().upper()):
+            return original_name
+        return f"{ticket.strip()}_{original_name}"
+
+
+    # ==========================================================
+    # Attachment download helpers
+    # ==========================================================
+    ATTACHMENT_LINK_SELECTOR_PRIMARY = "a[aria-label^='Download ' i]"
+    ATTACHMENT_LINK_SELECTOR_FALLBACK = "a[href*='sys_attachment.do']"
+
+
+    def _attachment_link_name(el):
+        """Derive a filename for an attachment <a> element. MUST be called
+        immediately after locating the element, in the same frame context it
+        was found in."""
+        name = None
+        try:
+            aria = el.get_attribute("aria-label") or ""
+        except Exception:
+            aria = ""
+        if aria.lower().startswith("download "):
+            name = aria[len("Download "):].strip()
+        if not name:
+            try:
+                text = (el.text or "").strip()
+            except Exception:
+                text = ""
+            if text:
+                name = text
+        if not name:
+            try:
+                href = el.get_attribute("href") or ""
+            except Exception:
+                href = ""
+            if href:
+                name = href.split("/")[-1].split("?")[0]
+        return name or None
+
+
+    def _is_view_link(el):
+        """Filters out the separate 'View <filename>' links that sit next to
+        each 'Download <filename>' link -- we only want to click Download."""
+        try:
+            aria = (el.get_attribute("aria-label") or "").lower()
+            if aria.startswith("view "):
+                return True
+        except Exception:
+            pass
+        try:
+            cls = (el.get_attribute("class") or "").lower()
+            if "view_" in cls or "view-" in cls:
+                return True
+        except Exception:
+            pass
+        return False
+
+
+    def find_next_unclicked_attachment(driver, downloaded_names):
+        """Finds the first attachment Download link not yet in `downloaded_names`,
+        returning it WITHOUT switching frames afterward, so it's still valid for
+        an immediate click()."""
+
+        def finder(d):
+            els = deep_find_all(d, ATTACHMENT_LINK_SELECTOR_PRIMARY)
+            if not els:
+                els = [e for e in deep_find_all(d, ATTACHMENT_LINK_SELECTOR_FALLBACK)
+                       if not _is_view_link(e)]
+            for el in els:
+                name = _attachment_link_name(el)
+                if name and name not in downloaded_names:
+                    el._attachment_name_cache = name
+                    return el
+            return None
+
+        return find_across_frames(driver, finder)
+
+
+    def open_manage_attachments(driver, ticket):
+        """Some tickets show every attachment inline in the header already
+        (no popup needed); others truncate the list and require clicking
+        'Manage Attachments (N)' to reveal the rest. Returns True if any
+        Download link is present anywhere on the page afterward, False if the
+        ticket has zero attachments (this is a NORMAL, expected outcome, not
+        an error)."""
+
+        def check_any_link(d):
+            el = deep_find(d, ATTACHMENT_LINK_SELECTOR_PRIMARY)
+            if el:
+                return el
+            for c in deep_find_all(d, ATTACHMENT_LINK_SELECTOR_FALLBACK):
+                if not _is_view_link(c):
+                    return c
+            return None
+
+        already_visible = find_across_frames(driver, check_any_link)
+        if already_visible:
+            log(f"  Step 2c: attachment link(s) already visible inline for {ticket}")
+            driver.switch_to.default_content()
+            return True
+
+        def find_trigger(d):
+            el = deep_find(d, "a#header_attachment_list_label")
+            if el:
+                return el
+            el = deep_find_by_text_contains(d, "Manage Attachments")
+            if el:
+                return el
+            return deep_find_by_text_contains(d, "Attachments (")
+
+        trigger = poll_until(
+            driver, ticket, "Step 2c: locating 'Manage Attachments' link",
+            lambda: find_across_frames(driver, find_trigger),
+            timeout=15, interval=1
+        )
+        if trigger is None:
+            log(f"  Step 2c: 'Manage Attachments' link NOT FOUND for {ticket} "
+                f"(this ticket has 0 attachments -- normal, not an error)")
+            driver.switch_to.default_content()
+            return False
+
+        log(f"  Step 2c: found 'Manage Attachments' trigger for {ticket}, clicking it")
+        try:
+            safe_click(driver, trigger)
+        except Exception as e:
+            log(f"  Step 2c: could not click 'Manage Attachments' trigger for {ticket}: {e}")
+            driver.switch_to.default_content()
+            return False
+        show_screenshot(driver, f"[{ticket}] Step 2c: opened Manage Attachments dialog")
+
+        opened = poll_until(
+            driver, ticket, "Step 2c: waiting for Attachments dialog to load",
+            lambda: find_across_frames(driver, check_any_link),
+            timeout=20, interval=1
+        )
+        driver.switch_to.default_content()
+        if not opened:
+            log(f"  Step 2c: Attachments popup opened but no Download links "
+                f"rendered within 20s for {ticket} (ticket may genuinely have 0 "
+                f"attachments, or the popup listed them differently than expected)")
+        return bool(opened)
+
+
+    def close_manage_attachments_dialog(driver, ticket):
+        """Closes the popup via an explicit close/X button only. Deliberately
+        never sends ESCAPE -- in ServiceNow's classic UI, ESC can navigate away
+        from the ticket entirely."""
+
+        def check_open(d):
+            el = deep_find(d, ATTACHMENT_LINK_SELECTOR_PRIMARY)
+            if el:
+                return el
+            return deep_find(d, "div.modal-dialog, div[role='dialog']")
+
+        still_open = find_across_frames(driver, check_open)
+        if not still_open:
+            driver.switch_to.default_content()
+            return
+
+        def find_close_btn(d):
+            for sel in ["button[aria-label='Close']", "button[title='Close']",
+                        ".close", "[aria-label*='close' i]", "button.btn-close",
+                        "img[alt='Close']", "a[title='Close']", ".glide_dialog_close"]:
+                el = deep_find(d, sel)
+                if el:
+                    return el
+            return None
+
+        btn = find_across_frames(driver, find_close_btn)
+        if btn:
+            try:
+                safe_click(driver, btn)
+                log(f"  Closed Attachments dialog for {ticket}")
+            except Exception as e:
+                log(f"  Could not close Attachments dialog for {ticket}: {e} (leaving it open)")
+        else:
+            log(f"  No explicit close button found for Attachments dialog on {ticket}; "
+                f"leaving it open (non-blocking) rather than sending ESCAPE.")
+
+        driver.switch_to.default_content()
+        time.sleep(1)
+
+
+    def download_ticket_attachments(driver, ticket, download_dir, attachments_dir):
+        """Finds and downloads every attachment for the ticket ONE AT A TIME.
+        If the ticket has zero attachments, this cleanly logs that and returns
+        -- no error, no retries, no impact on the PDF that was already
+        downloaded before this step runs."""
+
+        opened = open_manage_attachments(driver, ticket)
+        if not opened:
+            log(f"  No attachments found for {ticket} (skipping attachment download)")
+            return
+
+        log(f"  Step 2c: attachment link(s) confirmed present for {ticket}, downloading...")
+        downloaded_names = set()
+        max_iterations = 25
+        consecutive_click_failures = 0
+
+        for _ in range(max_iterations):
+            target = find_next_unclicked_attachment(driver, downloaded_names)
+
+            if target is None:
+                if not downloaded_names:
+                    log(f"  Step 2c: WARNING -- no attachment Download links could be "
+                        f"matched for {ticket} even though the trigger/popup opened.")
+                break
+
+            target_name = getattr(target, "_attachment_name_cache", None) or "attachment"
+
+            log(f"  Step 2c: downloading attachment '{target_name}' for {ticket}")
+            before_files = _list_files_only(get_candidate_download_dirs(download_dir))
+
+            try:
+                safe_click(driver, target)
+                consecutive_click_failures = 0
+            except Exception as e:
+                log(f"    Could not click attachment link '{target_name}' for {ticket}: {e}")
+                downloaded_names.add(target_name)
+                consecutive_click_failures += 1
+                driver.switch_to.default_content()
+                if consecutive_click_failures >= 3:
+                    log(f"    Too many consecutive click failures for {ticket}, stopping")
+                    break
+                continue
+
+            driver.switch_to.default_content()
+
+            show_screenshot(driver, f"[{ticket}] downloading attachment: {target_name}")
+            downloaded_file = wait_for_new_download(download_dir, before_files, timeout=90)
+
+            if downloaded_file:
+                new_name = build_attachment_filename(ticket, target_name)
+                dest_path = os.path.join(attachments_dir, new_name)
+                if os.path.exists(dest_path):
+                    root_name, ext = os.path.splitext(new_name)
+                    dest_path = os.path.join(attachments_dir, f"{root_name}_{int(time.time())}{ext}")
+                try:
+                    shutil.move(downloaded_file, dest_path)
+                    log(f"    Attachment saved as: {os.path.relpath(dest_path, download_dir)}")
+                except Exception as e:
+                    log(f"    Attachment downloaded but move/rename failed for {ticket}: {e}. "
+                        f"File left at: {downloaded_file}")
+            else:
+                log(f"    Attachment '{target_name}' did not finish downloading within 90s for {ticket}")
+
+            downloaded_names.add(target_name)
+            time.sleep(1)
+        else:
+            log(f"  Reached max attachment-download iterations ({max_iterations}) for {ticket}")
+
+        log(f"  Finished attachment downloads for {ticket}: {len(downloaded_names)} attachment(s) handled")
+        close_manage_attachments_dialog(driver, ticket)
+
+
+    # ==========================================================
     # Full ticket download flow
     # ==========================================================
-    def download_ticket_pdf(driver, ticket: str):
+    def download_ticket_pdf(driver, ticket: str, download_dir: str):
         driver.switch_to.default_content()
 
         log("  Step 1: clicking search box and typing ticket")
@@ -2267,7 +2981,8 @@ def run_cm_tool_1():
             )
 
         log("  Step 3: opening 'Additional actions' menu")
-        safe_click(driver, menu_btn)
+        fresh_menu_btn = find_across_frames(driver, check_menu_button) or menu_btn
+        safe_click(driver, fresh_menu_btn)
         show_screenshot(driver, f"[{ticket}] Step 3: menu opened")
 
         time.sleep(1)
@@ -2381,6 +3096,20 @@ def run_cm_tool_1():
 
         driver.switch_to.default_content()
 
+        log("  Step 9: downloading all attachments (if any) after PDF export")
+        attachments_dir = get_ticket_attachments_folder(download_dir, ticket)
+        try:
+            download_ticket_attachments(driver, ticket, download_dir, attachments_dir)
+        except Exception as ex:
+            log(f"  Attachment download step failed for {ticket}: {type(ex).__name__}: {ex}")
+            show_screenshot(driver, f"[{ticket}] Attachment download step failed")
+        finally:
+            # If the ticket had 0 attachments, don't leave a clutter empty
+            # "attachments" folder behind in the final output.
+            cleanup_empty_attachments_folder(attachments_dir)
+
+        driver.switch_to.default_content()
+
 
     # ==========================================================
     # Download detection — checks multiple candidate folders as a safety net
@@ -2394,13 +3123,26 @@ def run_cm_tool_1():
         return candidates
 
 
+    def _list_files_only(dirs):
+        """Returns only FILES (never directories) found directly inside any of
+        `dirs`. Critical: per-ticket folders (e.g. <download_dir>/CHG12345/ and
+        its attachments/ subfolder) get created via os.makedirs() -- a plain
+        glob.glob(dir/"*") would also match those new folders, which could get
+        mistaken for the downloaded PDF file itself. Filtering to
+        os.path.isfile() only avoids that."""
+        result = set()
+        for d in dirs:
+            for p in glob.glob(os.path.join(d, "*")):
+                if os.path.isfile(p):
+                    result.add(p)
+        return result
+
+
     def wait_for_new_download(download_dir: str, before_files: set, timeout: int = 120):
         candidate_dirs = get_candidate_download_dirs(download_dir)
         start = time.time()
         while time.time() - start < timeout:
-            current_files = set()
-            for d in candidate_dirs:
-                current_files |= set(glob.glob(os.path.join(d, "*")))
+            current_files = _list_files_only(candidate_dirs)
             new_files = current_files - before_files
             finished = [f for f in new_files if not f.endswith(".crdownload") and not f.endswith(".tmp")]
             still_downloading = any(
@@ -2413,10 +3155,14 @@ def run_cm_tool_1():
 
 
     def rename_downloaded_file(filepath: str, ticket_number: str, ticket_type_label: str, download_dir: str):
+        """Moves the exported PDF into the ticket's dedicated folder
+        (<download_dir>/<TICKET>/<TICKET>_<label>.pdf), separate from its
+        attachments (which live in <download_dir>/<TICKET>/attachments/)."""
         if not filepath or not os.path.exists(filepath):
             return None
         safe_label = ticket_type_label.replace(" ", "_")
-        new_name = os.path.join(download_dir, f"{ticket_number}_{safe_label}.pdf")
+        ticket_folder = get_ticket_folder(download_dir, ticket_number)
+        new_name = os.path.join(ticket_folder, f"{ticket_number}_{safe_label}.pdf")
         try:
             shutil.move(filepath, new_name)
             return new_name
@@ -2462,7 +3208,7 @@ def run_cm_tool_1():
         try:
             try:
                 with open(LOG_FILE_PATH, "w", encoding="utf-8") as f:
-                    f.write(f"=== Automation run started {datetime.datetime.now()} ===\n")
+                    f.write(f"=== Automation run started {now_ist()} ===\n")
             except Exception:
                 pass
 
@@ -2472,11 +3218,9 @@ def run_cm_tool_1():
             for ticket in tickets:
                 try:
                     log(f"Processing ticket: {ticket}")
-                    before_files = set()
-                    for d in get_candidate_download_dirs(download_dir):
-                        before_files |= set(glob.glob(os.path.join(d, "*")))
+                    before_files = _list_files_only(get_candidate_download_dirs(download_dir))
 
-                    download_ticket_pdf(driver, ticket)
+                    download_ticket_pdf(driver, ticket, download_dir)
 
                     downloaded_file = wait_for_new_download(download_dir, before_files, timeout=120)
 
@@ -2485,7 +3229,7 @@ def run_cm_tool_1():
                     if downloaded_file:
                         renamed = rename_downloaded_file(downloaded_file, ticket, ticket_type_label, download_dir)
                         if renamed:
-                            log(f"Ticket {ticket} downloaded and renamed to: {os.path.basename(renamed)}")
+                            log(f"Ticket {ticket} downloaded and renamed to: {os.path.relpath(renamed, download_dir)}")
                         else:
                             log(f"Ticket {ticket} downloaded but renaming failed. File was at: {downloaded_file}")
                     else:
@@ -2511,27 +3255,350 @@ def run_cm_tool_1():
             log("Automation completed. Browser closed.")
 
 
-    def make_zip(download_dir: str) -> str:
+    # ==========================================================
+    # Excel report generation (Change Management report) — extracted from each
+    # downloaded ticket PDF, merged into this tool so the report is produced
+    # automatically as part of the same run, no separate upload step needed.
+    # ==========================================================
+    def extract_field_value(text, field_label, length_limit=None):
+        try:
+            start_index = text.index(field_label) + len(field_label)
+            end_index = text.index("\n", start_index)
+            value = text[start_index:end_index].strip()
+            if length_limit:
+                value = value[:length_limit]
+            return value
+        except ValueError:
+            return None
+
+
+    def extract_requestor_value(text, field_label):
+        try:
+            start_index = text.index(field_label) + len(field_label)
+            end_index = text.index("\n", start_index)
+            value = text[start_index:end_index].strip()
+            end_paren_index = value.find(")")
+            if end_paren_index != -1:
+                value = value[: end_paren_index + 1]
+            if "Type:" in value:
+                value = value.split("Type:")[0].strip()
+            return value
+        except ValueError:
+            return None
+
+
+    def extract_value_after_line(text, field_label):
+        try:
+            start_index = text.index(field_label) + len(field_label)
+            end_index = text.index("\n", start_index)
+            next_line_start = end_index + 1
+            next_line_end = text.find("\n", next_line_start)
+            if next_line_end == -1:
+                next_line_end = len(text)
+            value = text[next_line_start:next_line_end].strip()
+            return value
+        except ValueError:
+            return None
+
+
+    def extract_data_from_pdf(file_bytes: bytes, filename: str):
+        text = ""
+        approvers = []
+        approval_dates = []
+        approver_details = []
+        change_developer = ""
+        change_implementor = ""
+        change_implemented_on = ""
+        cab_approval_provided = "False"
+        cab_approver = None
+        cab_approval_date = None
+
+        try:
+            with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+                for pdf_page in pdf.pages:
+                    for table in pdf_page.extract_tables():
+                        for row in table:
+                            if len(row) >= 10:
+                                type_value = (
+                                    (" ".join((row[2] or "").split())).lower() if row[2] else None
+                                )
+                                assigned_to_value = (
+                                    " ".join((row[9] or "").split()) if row[9] else None
+                                )
+                                assigned_end_date = row[8].strip() if row[8] else None
+
+                                if type_value and type_value.startswith("planning"):
+                                    change_developer = assigned_to_value
+                                elif type_value and type_value.startswith("implement"):
+                                    change_implementor = assigned_to_value
+                                    change_implemented_on = assigned_end_date
+        except Exception as e:
+            log(f"    [Excel] pdfplumber failed to extract tables from {filename}: {e}")
+
+        try:
+            with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+                for pdf_page in pdf.pages:
+                    page_text = pdf_page.extract_text()
+                    if page_text:
+                        text += page_text + "\n"
+
+                    for table in pdf_page.extract_tables():
+                        if table and "Approver" in table[0]:
+                            df = pd.DataFrame(table[1:], columns=table[0])
+                            approved_rows = df[df.iloc[:, 0].str.lower() == "approved"]
+
+                            approvers.extend(approved_rows.iloc[:, 1].tolist())
+                            approval_dates.extend(approved_rows.iloc[:, 4].tolist())
+                            approver_details.extend(approved_rows.iloc[:, 2].tolist())
+
+                            for idx, detail in enumerate(approved_rows.iloc[:, 2]):
+                                normalized_detail = str(detail).replace("\n", "").strip()
+                                if "@IT CAB Approvers" in normalized_detail:
+                                    cab_approval_provided = "Yes"
+                                    cab_approver = approved_rows.iloc[idx, 1]
+                                    cab_approval_date = approved_rows.iloc[idx, 4]
+                                    break
+                            if cab_approver:
+                                break
+        except Exception as e:
+            log(f"    [Excel] pdfplumber failed to extract text from {filename}: {e}")
+
+        ticket_no = extract_field_value(text, "Number:", length_limit=10)
+        requestor = extract_requestor_value(text, "Requested by:")
+        planned_start_date = extract_field_value(text, "Planned start date:", length_limit=19)
+        change_type = extract_field_value(text, "Type:")
+        change_description = extract_value_after_line(text, "Short description:")
+
+        change_approved_by = ", ".join(approvers)
+        change_approved_on = ", ".join(approval_dates)
+
+        attribute_checks = {
+            "Approvals Obtained": "Approval: Approved" in text,
+            "Segregation of Duty": change_implementor.strip().lower() != change_developer.strip().lower(),
+            "Exception Noted": "",
+            "CAB Approval Provided (Yes/No)?": cab_approval_provided,
+        }
+
+        return (
+            ticket_no,
+            requestor,
+            planned_start_date,
+            change_type,
+            change_description,
+            change_approved_by,
+            change_approved_on,
+            change_developer,
+            change_implementor,
+            change_implemented_on,
+            attribute_checks,
+            cab_approver,
+            cab_approval_date,
+            cab_approval_provided,
+        )
+
+
+    def generate_excel_report(data_list) -> bytes:
+        df = pd.DataFrame(
+            data_list,
+            columns=[
+                "Sl No", "Change Request Ticket", "Change Description", "Change Requestor",
+                "Planned Start Date", "Change Type", "Change Approved By", "Change Approved On",
+                "Approvals are obtained for all changes?",
+                "Change Implemented By", "Change Implemented On", "Change Developed By",
+                "Whether SOD is maintained between the developer and implementor? (Yes/No)",
+                "CAB Approval Provided (Yes/No)?",
+                "CAB Approver", "CAB Approval Obtained on", "Exception Noted",
+            ],
+        )
+
+        df["Whether SOD is maintained between the developer and implementor? (Yes/No)"] = df.apply(
+            lambda row: "True"
+            if str(row["Change Implemented By"]).strip().lower() != str(row["Change Developed By"]).strip().lower()
+            else "False",
+            axis=1,
+        )
+
+        df["Exception Noted"] = df.apply(
+            lambda row: "Yes" if row.astype(str).str.contains("False", case=False).any() else "No",
+            axis=1,
+        )
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Testing Table"
+        ws.sheet_view.showGridLines = False
+
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=21)
+        control_cell = ws.cell(row=1, column=1, value="Control Description: Testing & approval is required...")
+        control_cell.font = Font(name="Source Sans Pro", size=12, bold=True)
+
+        thin_border = Border(
+            left=Side(style="thin", color="5B2A86"),
+            right=Side(style="thin", color="5B2A86"),
+            top=Side(style="thin", color="5B2A86"),
+            bottom=Side(style="thin", color="5B2A86"),
+        )
+
+        attributes = [
+            "Attribute 1", "Approvals are obtained for all changes",
+            "Attribute 2", "Segregation of duty is ensured between developers and implementors",
+            "Attribute 3", "CAB Approval Provided (Yes/No)?",
+        ]
+        for i in range(0, len(attributes), 2):
+            attr_number = ws.cell(row=3 + i // 2, column=1, value=attributes[i])
+            attr_number.font = Font(name="Source Sans Pro", bold=True, color="FFFFFF")
+            attr_number.fill = PatternFill(start_color="5B2A86", end_color="5B2A86", fill_type="solid")
+            attr_number.border = thin_border
+            attr_description = ws.cell(row=3 + i // 2, column=2, value=attributes[i + 1])
+            attr_description.border = thin_border
+            attr_description.font = Font(name="Source Sans Pro")
+
+        start_row = 8
+
+        for r_idx, row in enumerate(dataframe_to_rows(df, index=False, header=True), start_row):
+            for c_idx, value in enumerate(row, 1):
+                if r_idx > start_row and c_idx == 14:
+                    value = ""
+                cell = ws.cell(row=r_idx, column=c_idx, value=value)
+                if r_idx == start_row:
+                    cell.font = Font(bold=True, color="FFFFFF", name="Source Sans Pro")
+                    cell.fill = PatternFill(start_color="5B2A86", end_color="5B2A86", fill_type="solid")
+                else:
+                    cell.font = Font(name="Source Sans Pro")
+                    cell.border = Border(
+                        left=Side(style="thin", color="5B2A86"),
+                        right=Side(style="thin", color="5B2A86"),
+                        top=Side(style="thin", color="5B2A86"),
+                        bottom=Side(style="thin", color="5B2A86"),
+                    )
+                    if c_idx == 14 and r_idx >= start_row + 1:
+                        cell.value = f'=IF(O{r_idx}<>"", "Yes", "No")'
+
+        for col in ws.iter_cols(min_row=3, max_row=start_row):
+            col_values = [len(str(cell.value)) for cell in col if cell.value is not None]
+            if col_values:
+                ws.column_dimensions[col[0].column_letter].width = max(col_values) + 2
+
+        for row in ws.iter_rows(min_row=start_row):
+            for cell in row:
+                cell.alignment = Alignment(wrap_text=True)
+
+        ws.protection.sheet = True
+        ws.protection.enable()
+
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+        return output.getvalue()
+
+
+    def build_excel_report_for_tickets(download_dir: str, tickets, ticket_type_label: str):
+        """Reads back each ticket's already-downloaded PDF (from its per-ticket
+        folder) and runs it through the same extraction/report logic as the
+        standalone Change Management Excel tool -- so the report is produced
+        automatically in the SAME run, with no separate upload step. Returns
+        the .xlsx bytes, or None if no ticket PDFs could be read."""
+        data_list = []
+        for i, ticket in enumerate(tickets, start=1):
+            ticket_folder = get_ticket_folder(download_dir, ticket)
+            pdf_files = sorted(glob.glob(os.path.join(ticket_folder, "*.pdf")))
+            if not pdf_files:
+                log(f"  [Excel] No PDF found for {ticket}, skipping in Excel report")
+                continue
+            try:
+                with open(pdf_files[0], "rb") as f:
+                    file_bytes = f.read()
+                (
+                    ticket_no, requestor, planned_start_date, change_type,
+                    change_description, change_approved_by, change_approved_on,
+                    change_developer, change_implementor, change_implemented_on,
+                    attribute_checks, cab_approver, cab_approval_date, cab_approval_provided,
+                ) = extract_data_from_pdf(file_bytes, os.path.basename(pdf_files[0]))
+
+                # Fall back to the originally-searched ticket number if the PDF
+                # text extraction didn't find one (keeps the report row usable
+                # even if the ticket's PDF layout differs slightly).
+                ticket_no = ticket_no or ticket
+
+                data_list.append(
+                    [
+                        i, ticket_no, change_description, requestor, planned_start_date,
+                        change_type, change_approved_by, change_approved_on,
+                        attribute_checks["Approvals Obtained"],
+                        change_implementor, change_implemented_on, change_developer,
+                        attribute_checks["Segregation of Duty"], cab_approval_provided,
+                        cab_approver, cab_approval_date, "",
+                    ]
+                )
+                log(f"  [Excel] Extracted report data for {ticket}")
+            except Exception as e:
+                log(f"  [Excel] Failed to process {ticket}: {type(e).__name__}: {e}")
+
+        if not data_list:
+            log("  [Excel] No valid ticket data to generate report.")
+            return None
+
+        return generate_excel_report(data_list)
+
+
+    def make_zip(download_dir: str, excel_bytes: bytes = None) -> str:
+        """Zips the entire per-ticket folder structure, PLUS the Excel
+        change-management report at the top level (if available):
+        tickets.zip
+          change_management_report.xlsx
+          CHG0096025/
+            CHG0096025_Normal_Ticket.pdf
+            attachments/
+              CHG0096025_COO File.zip
+              ...
+          CHG0070418/
+            CHG0070418_Normal_Ticket.pdf
+            (no attachments/ subfolder if this ticket had none)
+        """
         zip_path = os.path.join(download_dir, "tickets.zip")
         with zipfile.ZipFile(zip_path, "w") as zf:
-            for f in glob.glob(os.path.join(download_dir, "*.pdf")):
-                zf.write(f, os.path.basename(f))
+            for ticket_folder in sorted(glob.glob(os.path.join(download_dir, "*"))):
+                if not os.path.isdir(ticket_folder):
+                    continue
+                for root, _dirs, files in os.walk(ticket_folder):
+                    for fname in files:
+                        if fname == "tickets.zip":
+                            continue
+                        full_path = os.path.join(root, fname)
+                        arcname = os.path.relpath(full_path, download_dir)
+                        zf.write(full_path, arcname)
+            if excel_bytes:
+                zf.writestr("change_management_report.xlsx", excel_bytes)
         return zip_path
 
 
     # ==========================================================
     # UI
     # ==========================================================
-    st.title("Sequential Ticket Automation")
 
-    st.caption(f"Detailed logs are also saved to: `{LOG_FILE_PATH}`")
 
-    step = st.session_state.step
+    step = st.session_state.cm_step
 
     if step == 0:
-        st.header("Login")
-        st.session_state.sso_id = st.text_input("SSO ID", value=st.session_state.sso_id)
-        st.session_state.password = st.text_input("Password", type="password", value=st.session_state.password)
+        st.header("Confirm Automation Credentials")
+
+        _portal_user = st.session_state.get("current_user", {})
+        _portal_sso = _portal_user.get("sso_id", "")
+        _portal_pwd = st.session_state.get("plain_password", "")
+
+        if not st.session_state.cm_sso_id:
+            st.session_state.cm_sso_id = _portal_sso
+        if not st.session_state.cm_password:
+            st.session_state.cm_password = _portal_pwd
+
+        st.info(
+            "We will reuse the SSO ID and password you used to log into this portal. "
+            "You can override them below if you need to run the automation under a "
+            "different account."
+        )
+
+        st.session_state.cm_sso_id = st.text_input("SSO ID", value=st.session_state.cm_sso_id)
+        st.session_state.cm_password = st.text_input("Password", type="password", value=st.session_state.cm_password)
 
         st.info(
             "Your SSO ID and password will be entered automatically. After that, "
@@ -2540,32 +3607,24 @@ def run_cm_tool_1():
             "no browser interaction needed."
         )
 
-        st.session_state.headless = st.checkbox(
+        st.session_state.cm_headless = st.checkbox(
             "Run headless (leave checked for cloud deployment)",
-            value=st.session_state.headless,
+            value=st.session_state.cm_headless,
         )
 
         if st.button("Next"):
-            if st.session_state.sso_id and st.session_state.password:
-                st.session_state.step = 1
+            if st.session_state.cm_sso_id and st.session_state.cm_password:
+                st.session_state.cm_step = 1
                 st.rerun()
             else:
                 st.warning("Please enter your SSO ID and password.")
 
     elif step == 1:
-        st.subheader("Step 1: Select platform")
-        st.session_state.platform = st.radio(
-            "Platform",
-            list(TICKET_TYPE_LABELS.keys()),
-            index=list(TICKET_TYPE_LABELS.keys()).index(st.session_state.platform),
-        )
-
-        st.subheader("Step 2: Select ticket type")
-        labels = TICKET_TYPE_LABELS[st.session_state.platform]
+        labels = TICKET_TYPE_LABELS[st.session_state.cm_platform]
         label_values = list(labels.values())
-        default_label = labels[st.session_state.ticket_type_key] if st.session_state.ticket_type_key in labels else label_values[0]
-        choice_label = st.radio("Ticket type", label_values, index=label_values.index(default_label))
-        st.session_state.ticket_type_key = [k for k, v in labels.items() if v == choice_label][0]
+        default_label = labels[st.session_state.cm_ticket_type_key] if st.session_state.cm_ticket_type_key in labels else label_values[0]
+        choice_label = default_label
+        st.session_state.cm_ticket_type_key = [k for k, v in labels.items() if v == choice_label][0]
 
         st.subheader("Step 3: Paste TicketNumber column (one per line)")
         raw = st.text_area("Tickets", height=200)
@@ -2573,14 +3632,14 @@ def run_cm_tool_1():
         col1, col2 = st.columns(2)
         with col1:
             if st.button("Back"):
-                st.session_state.step = 0
+                st.session_state.cm_step = 0
                 st.rerun()
         with col2:
             if st.button("Load Tickets"):
                 tickets = [l.strip() for l in raw.splitlines() if l.strip()]
                 if tickets:
-                    st.session_state.tickets = tickets
-                    st.session_state.step = 2
+                    st.session_state.cm_tickets = tickets
+                    st.session_state.cm_step = 2
                     st.rerun()
                 else:
                     st.warning("No tickets found in pasted text.")
@@ -2588,24 +3647,35 @@ def run_cm_tool_1():
     elif step == 2:
         st.subheader("Ready to run")
 
-        labels = TICKET_TYPE_LABELS[st.session_state.platform]
-        ticket_type_label = labels[st.session_state.ticket_type_key]
+        labels = TICKET_TYPE_LABELS[st.session_state.cm_platform]
+        ticket_type_label = labels[st.session_state.cm_ticket_type_key]
 
-        st.write(f"**Platform:** {st.session_state.platform}")
-        st.write(f"**Ticket type:** {ticket_type_label}")
-
-        n = len(st.session_state.tickets)
+        n = len(st.session_state.cm_tickets)
         est = 60 + n * 150
         m, s = divmod(est, 60)
         st.info(f"Estimated time (excluding manual MFA approval): up to {m} min {s} sec")
 
-        st.write("**Ticket List**")
-        st.write(st.session_state.tickets)
+        st.markdown("**Ticket List**")
+        _ticket_rows = "".join(
+            f'<div style="padding:6px 12px;border-bottom:1px solid #E5D6F2;'
+            f'display:flex;align-items:center;gap:10px;">'
+            f'<span style="color:#5B2A86;font-weight:700;font-size:13px;">{i+1}.</span>'
+            f'<span style="color:#2B2B2B;font-family:monospace;font-size:14px;">{t}</span>'
+            f'</div>'
+            for i, t in enumerate(st.session_state.cm_tickets)
+        )
+        st.markdown(
+            "<div style=\"background-color:#FFFFFF;border:1.5px solid #5B2A86;"
+            "border-radius:8px;overflow:hidden;margin-bottom:14px;\">"
+            + _ticket_rows +
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
         col1, col2 = st.columns(2)
         with col1:
             if st.button("Back"):
-                st.session_state.step = 1
+                st.session_state.cm_step = 1
                 st.rerun()
         with col2:
             start_clicked = st.button("Start Process")
@@ -2617,21 +3687,36 @@ def run_cm_tool_1():
         with col_right:
             st.write("**Process Log**")
             _log_placeholder = st.empty()
-            _log_placeholder.text("\n".join(st.session_state.logs[-400:]))
+            render_process_log(_log_placeholder, st.session_state.cm_logs)
 
         if start_clicked:
             tmp_dir = tempfile.mkdtemp()
-            st.session_state.download_dir = tmp_dir
-            st.session_state.logs = []
+            st.session_state.cm_download_dir = tmp_dir
+            st.session_state.cm_logs = []
+            st.session_state.cm_excel_bytes = None
             run_automation(
-                st.session_state.sso_id,
-                st.session_state.password,
-                st.session_state.tickets,
+                st.session_state.cm_sso_id,
+                st.session_state.cm_password,
+                st.session_state.cm_tickets,
                 ticket_type_label,
                 tmp_dir,
-                st.session_state.headless,
+                st.session_state.cm_headless,
             )
-            st.session_state.password = ""
+            st.session_state.cm_password = ""
+
+            log("Generating Excel change-management report from downloaded ticket PDFs...")
+            with st.spinner("Generating Excel report..."):
+                try:
+                    st.session_state.cm_excel_bytes = build_excel_report_for_tickets(
+                        tmp_dir, st.session_state.cm_tickets, ticket_type_label
+                    )
+                    if st.session_state.cm_excel_bytes:
+                        log("Excel report generated successfully: change_management_report.xlsx")
+                    else:
+                        log("Excel report could not be generated (no ticket PDFs were readable).")
+                except Exception as ex:
+                    log(f"Excel report generation failed: {type(ex).__name__}: {ex}")
+                    st.session_state.cm_excel_bytes = None
 
         if os.path.exists(LOG_FILE_PATH):
             with open(LOG_FILE_PATH, "r", encoding="utf-8") as f:
@@ -2639,544 +3724,176 @@ def run_cm_tool_1():
             st.download_button("Download full diagnostic log (automation_log.txt)",
                                 log_content, file_name="automation_log.txt")
 
-        if st.session_state.download_dir:
-            pdf_files = sorted(glob.glob(os.path.join(st.session_state.download_dir, "*.pdf")))
-            if pdf_files:
+        if st.session_state.cm_excel_bytes:
+            st.write("### 📊 Change Management Excel Report")
+            st.download_button(
+                "⬇ Download Excel Report (change_management_report.xlsx)",
+                st.session_state.cm_excel_bytes,
+                file_name="change_management_report.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_excel_report",
+            )
+
+        if st.session_state.cm_download_dir:
+            ticket_folders = sorted([
+                d for d in glob.glob(os.path.join(st.session_state.cm_download_dir, "*"))
+                if os.path.isdir(d)
+            ])
+
+            if ticket_folders:
                 st.write("### Downloaded Tickets")
-                st.write(f"{len(pdf_files)} PDF(s) ready:")
+                st.write(f"{len(ticket_folders)} ticket folder(s) ready "
+                         f"(each contains the ticket PDF and its attachments, kept separate):")
 
-                for pdf_path in pdf_files:
-                    fname = os.path.basename(pdf_path)
-                    fsize_kb = os.path.getsize(pdf_path) / 1024
-                    with open(pdf_path, "rb") as f:
-                        st.download_button(
-                            f"⬇ {fname} ({fsize_kb:.0f} KB)",
-                            f,
-                            file_name=fname,
-                            mime="application/pdf",
-                            key=f"dl_{fname}",
-                        )
+                for ticket_folder in ticket_folders:
+                    ticket_name = os.path.basename(ticket_folder)
+                    pdf_files = sorted(glob.glob(os.path.join(ticket_folder, "*.pdf")))
+                    attachments_dir = os.path.join(ticket_folder, "attachments")
+                    attachment_files = sorted(glob.glob(os.path.join(attachments_dir, "*"))) \
+                        if os.path.isdir(attachments_dir) else []
 
-                zip_path = make_zip(st.session_state.download_dir)
+                    with st.expander(
+                        f"📁 {ticket_name}  "
+                        f"({len(pdf_files)} PDF, {len(attachment_files)} attachment(s))",
+                        expanded=False,
+                    ):
+                        if pdf_files:
+                            st.caption("Ticket PDF")
+                            for pdf_path in pdf_files:
+                                fname = os.path.basename(pdf_path)
+                                fsize_kb = os.path.getsize(pdf_path) / 1024
+                                with open(pdf_path, "rb") as f:
+                                    st.download_button(
+                                        f"⬇ {fname} ({fsize_kb:.0f} KB)",
+                                        f,
+                                        file_name=fname,
+                                        mime="application/pdf",
+                                        key=f"dl_pdf_{ticket_name}_{fname}",
+                                    )
+                        else:
+                            st.caption("No PDF found for this ticket.")
+
+                        if attachment_files:
+                            st.caption("Attachments")
+                            for att_path in attachment_files:
+                                fname = os.path.basename(att_path)
+                                fsize_kb = os.path.getsize(att_path) / 1024
+                                with open(att_path, "rb") as f:
+                                    st.download_button(
+                                        f"⬇ {fname} ({fsize_kb:.0f} KB)",
+                                        f,
+                                        file_name=fname,
+                                        key=f"dl_att_{ticket_name}_{fname}",
+                                    )
+                        else:
+                            st.caption("No attachments for this ticket.")
+
+                zip_path = make_zip(st.session_state.cm_download_dir, st.session_state.cm_excel_bytes)
+                zip_label = (
+                    "⬇ Download ALL tickets + attachments + Excel report as ZIP "
+                    "(organized in per-ticket folders)"
+                    if st.session_state.cm_excel_bytes else
+                    "⬇ Download ALL tickets + attachments as ZIP "
+                    "(organized in per-ticket folders)"
+                )
                 with open(zip_path, "rb") as f:
                     st.download_button(
-                        "⬇ Download ALL as ZIP",
+                        zip_label,
                         f,
                         file_name="tickets.zip",
                         mime="application/zip",
                         key="dl_zip_all",
                     )
             else:
-                st.info("No PDFs downloaded yet in this session.")
+                st.info("No tickets downloaded yet in this session.")
 
 
-# ============================================================
-# ============================================================
-#   TOOL 3: CM TOOL 2  (Change Management Tool - Excel report)
-# ============================================================
-# ============================================================
 
-# ---------------------------------------------------------------------------
-# Logging helper – writes into st.session_state so it survives reruns
-# ---------------------------------------------------------------------------
-def log_to_frontend(message: str):
-    if "conversion_log" not in st.session_state:
-        st.session_state.conversion_log = []
-    st.session_state.conversion_log.append(message)
+# ============================================================================
+# SECTION 9 — MAIN APP
+# ============================================================================
+st.set_page_config(page_title="GEHC SOx Tool Portal", page_icon="🔐", layout="wide")
+inject_global_css()
 
-
-# ---------------------------------------------------------------------------
-# Extraction helpers (identical logic to the original Flet version)
-# ---------------------------------------------------------------------------
-def extract_field_value(text, field_label, length_limit=None):
-    try:
-        start_index = text.index(field_label) + len(field_label)
-        end_index = text.index("\n", start_index)
-        value = text[start_index:end_index].strip()
-        if length_limit:
-            value = value[:length_limit]
-        log_to_frontend(f"Extracted value for '{field_label}': {value}")
-        return value
-    except ValueError:
-        log_to_frontend(f"Field '{field_label}' not found in text.")
-        return None
+if "authenticated" not in st.session_state: st.session_state.authenticated = False
+if "current_user" not in st.session_state: st.session_state.current_user = None
+if "login_error" not in st.session_state: st.session_state.login_error = ""
+if "active_tool" not in st.session_state: st.session_state.active_tool = None
+if "portal_view" not in st.session_state: st.session_state.portal_view = "dashboard"
 
 
-def extract_requestor_value(text, field_label):
-    try:
-        start_index = text.index(field_label) + len(field_label)
-        end_index = text.index("\n", start_index)
-        value = text[start_index:end_index].strip()
-        end_paren_index = value.find(")")
-        if end_paren_index != -1:
-            value = value[: end_paren_index + 1]
-        if "Type:" in value:
-            value = value.split("Type:")[0].strip()
-
-        log_to_frontend(f"Extracted requestor for '{field_label}': {value}")
-        return value
-    except ValueError:
-        log_to_frontend(f"Field '{field_label}' not found in text.")
-        return None
+def _logout():
+    for key in ["authenticated", "current_user", "login_error", "active_tool", "portal_view", "plain_password", "register_error", "register_success"]:
+        if key in st.session_state:
+            st.session_state[key] = False if key == "authenticated" else None
+    st.session_state.portal_view = "dashboard"
+    st.rerun()
 
 
-def extract_value_after_line(text, field_label):
-    try:
-        start_index = text.index(field_label) + len(field_label)
-        end_index = text.index("\n", start_index)
-        next_line_start = end_index + 1
-        next_line_end = text.find("\n", next_line_start)
-        if next_line_end == -1:
-            next_line_end = len(text)
-        value = text[next_line_start:next_line_end].strip()
-        log_to_frontend(f"Extracted value after '{field_label}': {value}")
-        return value
-    except ValueError:
-        log_to_frontend(f"Field '{field_label}' not found in text.")
-        return None
-
-
-def extract_data_from_pdf(file_bytes: bytes, filename: str):
-    text = ""
-    approvers = []
-    approval_dates = []
-    approver_details = []
-    change_developer = ""
-    change_implementor = ""
-    change_implemented_on = ""
-    cab_approval_provided = "False"
-    cab_approver = None
-    cab_approval_date = None
-
-    # ---- pass 1: developer / implementor from the "Planning" / "Implement" rows
-    try:
-        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-            for pdf_page in pdf.pages:
-                for table in pdf_page.extract_tables():
-                    for row in table:
-                        if len(row) >= 10:
-                            type_value = (
-                                (" ".join((row[2] or "").split())).lower() if row[2] else None
-                            )
-                            assigned_to_value = (
-                                " ".join((row[9] or "").split()) if row[9] else None
-                            )
-                            assigned_end_date = row[8].strip() if row[8] else None
-
-                            if type_value and type_value.startswith("planning"):
-                                change_developer = assigned_to_value
-                            elif type_value and type_value.startswith("implement"):
-                                change_implementor = assigned_to_value
-                                change_implemented_on = assigned_end_date
-    except Exception as e:
-        log_to_frontend(f"pdfplumber failed to extract tables from {filename}: {e}")
-
-    # ---- pass 2: full text + approver table
-    try:
-        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-            for pdf_page in pdf.pages:
-                page_text = pdf_page.extract_text()
-                if page_text:
-                    text += page_text + "\n"
-
-                for table in pdf_page.extract_tables():
-                    if table and "Approver" in table[0]:
-                        df = pd.DataFrame(table[1:], columns=table[0])
-                        approved_rows = df[df.iloc[:, 0].str.lower() == "approved"]
-
-                        approvers.extend(approved_rows.iloc[:, 1].tolist())
-                        approval_dates.extend(approved_rows.iloc[:, 4].tolist())
-                        approver_details.extend(approved_rows.iloc[:, 2].tolist())
-
-                        for idx, detail in enumerate(approved_rows.iloc[:, 2]):
-                            normalized_detail = str(detail).replace("\n", "").strip()
-                            if "@IT CAB Approvers" in normalized_detail:
-                                cab_approval_provided = "Yes"
-                                cab_approver = approved_rows.iloc[idx, 1]
-                                cab_approval_date = approved_rows.iloc[idx, 4]
-                                log_to_frontend(
-                                    "CAB Approval keyword found in approver details. "
-                                    f"CAB Approver: {cab_approver}, Date: {cab_approval_date}"
-                                )
-                                break
-                        if cab_approver:
-                            break
-    except Exception as e:
-        log_to_frontend(f"pdfplumber failed to extract text from {filename}: {e}")
-
-    ticket_no = extract_field_value(text, "Number:", length_limit=10)
-    requestor = extract_requestor_value(text, "Requested by:")
-    planned_start_date = extract_field_value(text, "Planned start date:", length_limit=19)
-    extract_field_value(text, "Planned end date:")            # extracted for parity/log only
-    extract_field_value(text, "Approval obtained on:")        # extracted for parity/log only
-    change_type = extract_field_value(text, "Type:")
-    change_description = extract_value_after_line(text, "Short description:")
-    extract_field_value(text, "Actual start date:")           # extracted for parity/log only
-    extract_field_value(text, "Actual end date:")              # extracted for parity/log only
-
-    change_approved_by = ", ".join(approvers)
-    change_approved_on = ", ".join(approval_dates)
-
-    attribute_checks = {
-        "Approvals Obtained": "Approval: Approved" in text,
-        "Segregation of Duty": change_implementor.strip().lower() != change_developer.strip().lower(),
-        "Exception Noted": "",
-        "CAB Approval Provided (Yes/No)?": cab_approval_provided,
-    }
-
-    return (
-        ticket_no,
-        requestor,
-        planned_start_date,
-        change_type,
-        change_description,
-        change_approved_by,
-        change_approved_on,
-        change_developer,
-        change_implementor,
-        change_implemented_on,
-        attribute_checks,
-        cab_approver,
-        cab_approval_date,
-        cab_approval_provided,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Excel report generator (same formatting/formulas as the original)
-# ---------------------------------------------------------------------------
-def generate_excel_report(data_list) -> bytes:
-    df = pd.DataFrame(
-        data_list,
-        columns=[
-            "Sl No", "Change Request Ticket", "Change Description", "Change Requestor",
-            "Planned Start Date", "Change Type", "Change Approved By", "Change Approved On",
-            "Approvals are obtained for all changes?",
-            "Change Implemented By", "Change Implemented On", "Change Developed By",
-            "Whether SOD is maintained between the developer and implementor? (Yes/No)",
-            "CAB Approval Provided (Yes/No)?",
-            "CAB Approver", "CAB Approval Obtained on", "Exception Noted",
-        ],
-    )
-
-    df["Whether SOD is maintained between the developer and implementor? (Yes/No)"] = df.apply(
-        lambda row: "True"
-        if str(row["Change Implemented By"]).strip().lower() != str(row["Change Developed By"]).strip().lower()
-        else "False",
-        axis=1,
-    )
-
-    df["Exception Noted"] = df.apply(
-        lambda row: "Yes" if row.astype(str).str.contains("False", case=False).any() else "No",
-        axis=1,
-    )
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Testing Table"
-    ws.sheet_view.showGridLines = False
-
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=21)
-    control_cell = ws.cell(row=1, column=1, value="Control Description: Testing & approval is required...")
-    control_cell.font = Font(name="Source Sans Pro", size=12, bold=True)
-
-    thin_border = Border(
-        left=Side(style="thin", color="000000"),
-        right=Side(style="thin", color="000000"),
-        top=Side(style="thin", color="000000"),
-        bottom=Side(style="thin", color="000000"),
-    )
-
-    attributes = [
-        "Attribute 1", "Approvals are obtained for all changes",
-        "Attribute 2", "Segregation of duty is ensured between developers and implementors",
-        "Attribute 3", "CAB Approval Provided (Yes/No)?",
-    ]
-    for i in range(0, len(attributes), 2):
-        attr_number = ws.cell(row=3 + i // 2, column=1, value=attributes[i])
-        attr_number.font = Font(name="Source Sans Pro", bold=True, color="FFFFFF")
-        attr_number.fill = PatternFill(start_color="7030A0", end_color="7030A0", fill_type="solid")
-        attr_number.border = thin_border
-        attr_description = ws.cell(row=3 + i // 2, column=2, value=attributes[i + 1])
-        attr_description.border = thin_border
-        attr_description.font = Font(name="Source Sans Pro")
-
-    start_row = 8
-
-    for r_idx, row in enumerate(dataframe_to_rows(df, index=False, header=True), start_row):
-        for c_idx, value in enumerate(row, 1):
-            if r_idx > start_row and c_idx == 14:
-                value = ""
-            cell = ws.cell(row=r_idx, column=c_idx, value=value)
-            if r_idx == start_row:
-                cell.font = Font(bold=True, color="FFFFFF", name="Source Sans Pro")
-                cell.fill = PatternFill(start_color="7030A0", end_color="7030A0", fill_type="solid")
+def _render_change_password_widget():
+    with st.expander("🔑 Change Password"):
+        with st.form("change_password_form", clear_on_submit=True):
+            current_pwd = st.text_input("Current Password", type="password", key="cp_current")
+            new_pwd = st.text_input("New Password", type="password", key="cp_new")
+            confirm_pwd = st.text_input("Confirm New Password", type="password", key="cp_confirm")
+            cp_submitted = st.form_submit_button("Update Password", use_container_width=True)
+        if cp_submitted:
+            if new_pwd != confirm_pwd:
+                st.error("New password and confirmation do not match.")
             else:
-                cell.font = Font(name="Source Sans Pro")
-                cell.border = Border(
-                    left=Side(style="thin"), right=Side(style="thin"),
-                    top=Side(style="thin"), bottom=Side(style="thin"),
-                )
-                if c_idx == 14 and r_idx >= start_row + 1:
-                    cell.value = f'=IF(O{r_idx}<>"", "Yes", "No")'
-
-    for col in ws.iter_cols(min_row=3, max_row=start_row):
-        col_values = [len(str(cell.value)) for cell in col if cell.value is not None]
-        if col_values:
-            ws.column_dimensions[col[0].column_letter].width = max(col_values) + 2
-
-    for row in ws.iter_rows(min_row=start_row):
-        for cell in row:
-            cell.alignment = Alignment(wrap_text=True)
-
-    ws.protection.sheet = True
-    ws.protection.enable()
-
-    output = io.BytesIO()
-    wb.save(output)
-    output.seek(0)
-    return output.getvalue()
+                sso_id = st.session_state.current_user.get("sso_id")
+                ok, msg = change_password(sso_id, current_pwd, new_pwd)
+                if ok:
+                    st.success(msg)
+                    st.session_state.plain_password = new_pwd
+                else:
+                    st.error(msg)
 
 
-# ---------------------------------------------------------------------------
-# Streamlit UI
-# ---------------------------------------------------------------------------
-def run_cm_tool_2():
+if not st.session_state.authenticated:
+    render_login_page()
+else:
+    _sso_id = st.session_state.current_user.get("sso_id")
+    _fresh_user = get_user(_sso_id)
+    if _fresh_user:
+        _fresh_user["sso_id"] = _sso_id
+        st.session_state.current_user = _fresh_user
 
-    if "conversion_log" not in st.session_state:
-        st.session_state.conversion_log = []
-    if "excel_bytes" not in st.session_state:
-        st.session_state.excel_bytes = None
+    user = st.session_state.current_user
+    role = user.get("role")
+    account_status = user.get("status", STATUS_APPROVED)
+    is_admin_role = (role == ROLE_ADMIN)
+    pending_count = len(get_pending_users()) if is_admin_role else 0
 
-    st.title("🛠️ Change Management Tool")
-    st.caption(
-        "Upload Pulse change tickets (PDF), extract key control-testing details, "
-        "and generate a formatted Excel report."
-    )
-    st.divider()
-
-    uploaded_files = st.file_uploader(
-        "📤 Upload Tickets (PDF)", type=["pdf"], accept_multiple_files=True
-    )
-
-    st.subheader(f"Ticket Count: {len(uploaded_files) if uploaded_files else 0}")
-
-    if uploaded_files:
-        st.write("**Pulse Tickets Uploaded**")
-        file_df = pd.DataFrame(
-            {"#": range(1, len(uploaded_files) + 1), "File Name": [f.name for f in uploaded_files]}
-        )
-        st.dataframe(file_df, use_container_width=True, hide_index=True)
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        generate_clicked = st.button("⚙️ Generate Report", use_container_width=True)
-    with col2:
-        download_slot = st.container()
-    with col3:
-        if st.button("🗑️ Clear Log", use_container_width=True):
-            st.session_state.conversion_log = []
-
-    # ------------------------- Generate report -------------------------
-    if generate_clicked:
-        st.session_state.conversion_log = []
-        if not uploaded_files:
-            log_to_frontend("No tickets uploaded. Please upload tickets first.")
-        else:
-            data_list = []
-            progress = st.progress(0.0)
-            with st.spinner("Processing tickets..."):
-                for i, file in enumerate(uploaded_files, start=1):
-                    try:
-                        file_bytes = file.getvalue()
-                        (
-                            ticket_no, requestor, planned_start_date, change_type,
-                            change_description, change_approved_by, change_approved_on,
-                            change_developer, change_implementor, change_implemented_on,
-                            attribute_checks, cab_approver, cab_approval_date, cab_approval_provided,
-                        ) = extract_data_from_pdf(file_bytes, file.name)
-
-                        data_list.append(
-                            [
-                                i, ticket_no, change_description, requestor, planned_start_date,
-                                change_type, change_approved_by, change_approved_on,
-                                attribute_checks["Approvals Obtained"],
-                                change_implementor, change_implemented_on, change_developer,
-                                attribute_checks["Segregation of Duty"], cab_approval_provided,
-                                cab_approver, cab_approval_date, "",
-                            ]
-                        )
-                    except Exception as e:
-                        log_to_frontend(f"Failed to process {file.name}: {e}")
-
-                    progress.progress(i / len(uploaded_files))
-
-            if data_list:
-                st.session_state.excel_bytes = generate_excel_report(data_list)
-                log_to_frontend("Excel report generated successfully: change_management_report.xlsx")
-                st.success("✅ Report Generated Successfully!")
-            else:
-                log_to_frontend("No valid data to generate report.")
-                st.session_state.excel_bytes = None
-
-    # ------------------------- Download button -------------------------
-    with download_slot:
-        if st.session_state.excel_bytes:
-            st.download_button(
-                label="⬇️ Download Report",
-                data=st.session_state.excel_bytes,
-                file_name="change_management_report.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-            )
-        else:
-            st.button("⬇️ Download Report", disabled=True, use_container_width=True)
-
-    # ------------------------- Conversion log -------------------------
-    st.divider()
-    st.subheader("📋 Conversion Log")
-    log_text = "\n".join(st.session_state.conversion_log) if st.session_state.conversion_log else "No log messages yet."
-    st.text_area("Conversion log", value=log_text, height=280, disabled=True, label_visibility="collapsed")
-
-# ============================================================
-# MAIN APP LOGIC
-# ============================================================
-def render_home():
-    name = st.session_state.user_name or "there"
-    st.markdown(
-        f"""
-        <div class="portal-hero">
-            <h1>{_greeting()}, {name}! 👋</h1>
-            <p>Welcome to the GEHC SOX TOOL pick a tool below to get started, or use the sidebar anytime.</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    m1, m2, m3 = st.columns(3)
-    with m1:
-        st.metric("🧰 Tools Available", len(TOOL_INFO))
-    with m2:
-        login_time_str = (
-            st.session_state.login_time.strftime("%I:%M %p")
-            if st.session_state.login_time else "—"
-        )
-        st.metric("🕒 Session Started", login_time_str)
-    with m3:
-        st.metric("👤 Logged in as", st.session_state.user_name or "—")
-
-    st.write("")
-    st.subheader("Choose a tool to launch")
-
-    cols = st.columns(3)
-    tool_names = list(TOOL_INFO.keys())
-    for col, tname in zip(cols, tool_names):
-        info = TOOL_INFO[tname]
-        with col:
-            st.markdown(
-                f"""
-                <div class="tool-card">
-                    <div class="icon">{info['icon']}</div>
-                    <h3>{tname}</h3>
-                    <p>{info['description']}</p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            if st.button(f"Open {tname} ➜", key=f"open_{tname}", use_container_width=True):
-                st.session_state.selected_tool = tname
-                st.rerun()
-
-    st.write("")
-    st.info(
-        "💡 **Tip:** You can switch between tools anytime using the navigation menu in the sidebar "
-    )
-
-
-def render_sidebar_nav():
-    name = st.session_state.user_name or "User"
-    sso = st.session_state.user_sso or ""
-    initials = _get_initials(name)
-
-    st.sidebar.markdown(
-        f"""
-        <div class="sidebar-user-box">
-            <div class="avatar-circle">{initials}</div>
-            <div class="info">
-                <div class="name">{name}</div>
-                <div class="sso">SSO: {sso}</div>
+    with st.sidebar:
+        initials = "".join([p[0] for p in user.get("name", "?").split()[:2]]).upper() or "?"
+        st.markdown(f"""
+            <div class="sidebar-user-card">
+                <div class="sidebar-avatar">{initials}</div>
+                <div class="sidebar-name">{user.get('name')}</div>
+                <div class="sidebar-sso">SSO: {user.get('sso_id')}</div>
+                <div class="sidebar-role-pill">{role}</div>
             </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+            """, unsafe_allow_html=True)
+        st.markdown("---")
 
-    logout()
+        _render_change_password_widget()
+        st.markdown("---")
 
-    st.sidebar.markdown("---")
-    st.sidebar.caption("NAVIGATION")
+        if is_admin_role:
+            admin_label = f"Admin Portal ({pending_count} new)" if pending_count else "Admin Portal"
+            nav_choice = st.radio("Navigate", options=["My Dashboard", admin_label], index=0 if st.session_state.portal_view == "dashboard" else 1, label_visibility="collapsed")
+            st.session_state.portal_view = "dashboard" if nav_choice == "My Dashboard" else "admin"
+            st.markdown("---")
+        else:
+            st.session_state.portal_view = "dashboard"
 
-    nav_options = ["Home"] + list(TOOL_INFO.keys())
-    icons_map = {"Home": "🏠", **{k: v["icon"] for k, v in TOOL_INFO.items()}}
+        if st.button("🚪  Logout", use_container_width=True):
+            _logout()
 
-    current = st.session_state.selected_tool
-    if current not in nav_options:
-        current = "Home"
-
-    choice = st.sidebar.radio(
-        "Go to",
-        nav_options,
-        index=nav_options.index(current),
-        format_func=lambda x: f"{icons_map.get(x, '')}  {x}",
-        label_visibility="collapsed",
-    )
-    st.session_state.selected_tool = choice
-
-    st.sidebar.markdown("---")
-    with st.sidebar.expander("ℹ️ About this portal"):
-        st.write(
-            "This portal gives SSO-verified users quick access to internal "
-            "compliance & change-management tools:\n\n"
-            "- ✅ **Saviynt Tool** — SOX access checks\n"
-            "- 🎫 **CM Tool 1** — Ticket automation\n"
-            "- 🛠️ **CM Tool 2** — Excel report generator"
-        )
-    st.sidebar.caption("v1.0 · Internal use only")
-
-    return choice
-
-
-def main():
-    if not st.session_state.authenticated:
-        login()
-        return
-
-    choice = render_sidebar_nav()
-
-    if choice == "Home":
-        render_home()
-    elif choice == "Saviynt Tool":
-        render_page_banner(
-            "Saviynt Tool",
-            TOOL_INFO["Saviynt Tool"]["tagline"],
-            TOOL_INFO["Saviynt Tool"]["icon"],
-        )
-        run_saviynt_tool()
-    elif choice == "CM Tool 1":
-        render_page_banner(
-            "CM Tool 1",
-            TOOL_INFO["CM Tool 1"]["tagline"],
-            TOOL_INFO["CM Tool 1"]["icon"],
-        )
-        run_cm_tool_1()
-    elif choice == "CM Tool 2":
-        render_page_banner(
-            "CM Tool 2",
-            TOOL_INFO["CM Tool 2"]["tagline"],
-            TOOL_INFO["CM Tool 2"]["icon"],
-        )
-        run_cm_tool_2()
-
-
-if __name__ == "__main__":
-    main()
+    if account_status == STATUS_PENDING:
+        render_pending_screen()
+    elif is_admin_role and st.session_state.portal_view == "admin":
+        render_admin_portal()
+    else:
+        render_dashboard()
