@@ -54,7 +54,7 @@ USERS_FILE = os.path.join(DATA_DIR, "users.json")
 
 ROLE_ADMIN = "Admin"
 ROLE_SOX   = "GEHC IT SOX Team"
-ROLE_USER  = "Rejected User"
+ROLE_USER  = "Regular User"
 ALL_ROLES = [ROLE_ADMIN, ROLE_SOX, ROLE_USER]
 
 APP_SAVIYNT       = "Access Reconciliation Suite"
