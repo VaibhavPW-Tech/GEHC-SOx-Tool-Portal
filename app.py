@@ -1,5 +1,5 @@
 """
-GEHC SOx Tool Portal — Single-File Streamlit Application
+Tech Assisted Audit Tools — Single-File Streamlit Application
 =======================================================
 Contains: SSO login, self-service account registration with admin
 approval workflow, password change, Admin Portal (Admin-only),
@@ -54,10 +54,10 @@ USERS_FILE = os.path.join(DATA_DIR, "users.json")
 
 ROLE_ADMIN = "Admin"
 ROLE_SOX   = "GEHC IT SOX Team"
-ROLE_USER  = "Regular User"
+ROLE_USER  = "Rejected User"
 ALL_ROLES = [ROLE_ADMIN, ROLE_SOX, ROLE_USER]
 
-APP_SAVIYNT       = "Access Reconcillation"
+APP_SAVIYNT       = "Access Reconciliation Suite"
 APP_CM_AUTOMATION = "CM Automation"
 ALL_APPS = [APP_SAVIYNT, APP_CM_AUTOMATION]
 SOX_PROVISIONABLE_APPS = [APP_SAVIYNT, APP_CM_AUTOMATION]
@@ -168,8 +168,8 @@ def register_user(sso_id: str, name: str, email: str, password: str):
 
 
 def change_password(sso_id: str, current_password: str, new_password: str):
-    if not new_password or len(new_password) < 6:
-        return False, "New password must be at least 6 characters."
+    if not new_password or len(new_password) < 15:
+        return False, "New password must be at least 15 characters."
     sso_key = sso_id.strip().lower()
     users = load_users()
     user = users.get(sso_key)
@@ -378,7 +378,7 @@ def _render_create_account_tab():
         reg_sso_id = st.text_input("Choose an SSO ID *", key="reg_sso_input")
         reg_name = st.text_input("Full Name *", key="reg_name_input")
         reg_email = st.text_input("Email *", key="reg_email_input")
-        reg_password = st.text_input("Password *", type="password", placeholder="At least 6 characters", key="reg_pwd_input")
+        reg_password = st.text_input("Password *", type="password", placeholder="At least 15 characters", key="reg_pwd_input")
         reg_password_confirm = st.text_input("Confirm Password *", type="password", key="reg_pwd_confirm_input")
         reg_submitted = st.form_submit_button("Create Account", use_container_width=True)
 
@@ -414,7 +414,7 @@ def render_login_page():
         st.markdown(f"""
             <div style="text-align:center;margin-bottom:20px;">
                 <div style="width:62px;height:62px;border-radius:16px;margin:0 auto 12px auto;background:linear-gradient(135deg,{PRIMARY_PURPLE},{PRIMARY_PURPLE_DARK});display:flex;align-items:center;justify-content:center;font-weight:800;font-size:23px;color:#FFF;box-shadow:0 8px 20px rgba(91,42,134,0.30);">GE</div>
-                <div style="font-size:21px;font-weight:800;color:{PRIMARY_PURPLE_DARK};">GEHC SOx Tool Portal</div>
+                <div style="font-size:21px;font-weight:800;color:{PRIMARY_PURPLE_DARK};">Tech Assisted Audit Tools</div>
                 <div style="font-size:12.5px;color:{TEXT_MUTED};text-transform:uppercase;letter-spacing:0.4px;margin-top:2px;">GEHC IT SOX Team</div>
             </div>
             """, unsafe_allow_html=True)
@@ -519,7 +519,7 @@ def render_admin_portal():
     m1.metric("Total Users", len(users))
     m2.metric("Admins", sum(1 for u in users.values() if u.get("role") == ROLE_ADMIN))
     m3.metric("SOX Team", sum(1 for u in users.values() if u.get("role") == ROLE_SOX))
-    m4.metric("Regular Users", sum(1 for u in users.values() if u.get("role") == ROLE_USER))
+    m4.metric("Rejected User", sum(1 for u in users.values() if u.get("role") == ROLE_USER))
     m5.metric("Active Accounts", sum(1 for u in users.values() if u.get("active", True)))
 
     st.markdown("---")
@@ -616,8 +616,8 @@ def _render_manage_existing_users(users: dict, current_role: str):
 # ============================================================================
 APP_ICONS = {APP_SAVIYNT: "🛡️", APP_CM_AUTOMATION: "⚙️"}
 APP_DESCRIPTIONS = {
-    APP_SAVIYNT: "SOX Access Comparison Tool will validate Saviynt access requests, approvals, and role provisioning.",
-    APP_CM_AUTOMATION: "Change Management Automation Tool will auto-download Pulse ticket PDFs/attachments and generate compliance reports.",
+    APP_SAVIYNT: "App provisioning testing: Validate access requests for Saviynt based approvals, roles provisioned and export the results in an excel report.",
+    APP_CM_AUTOMATION: "Change Management SOX testing: Parse change tickets (PDF), perform IT SOD check, validate CAB approvals and export the results in an excel report. ",
 }
 
 
@@ -3603,7 +3603,7 @@ def render_cm_automation_tool():
         st.info(
             "Your SSO ID and password will be entered automatically. After that, "
             "you'll just need to approve the push notification on your authenticator "
-            "app (e.g. Okta Verify / Duo / Microsoft Authenticator) on your phone — "
+            "app (PingID) on your mobile device, "
             "no browser interaction needed."
         )
 
@@ -3626,7 +3626,7 @@ def render_cm_automation_tool():
         choice_label = default_label
         st.session_state.cm_ticket_type_key = [k for k, v in labels.items() if v == choice_label][0]
 
-        st.subheader("Step 3: Paste TicketNumber column (one per line)")
+        st.subheader("Paste Ticket Number (in a column, one per line)")
         raw = st.text_area("Tickets", height=200)
 
         col1, col2 = st.columns(2)
@@ -3812,7 +3812,7 @@ def render_cm_automation_tool():
 # ============================================================================
 # SECTION 9 — MAIN APP
 # ============================================================================
-st.set_page_config(page_title="GEHC SOx Tool Portal", page_icon="🔐", layout="wide")
+st.set_page_config(page_title="Tech Assisted Audit Tools", page_icon="🔐", layout="wide")
 inject_global_css()
 
 if "authenticated" not in st.session_state: st.session_state.authenticated = False
