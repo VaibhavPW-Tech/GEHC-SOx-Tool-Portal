@@ -1,12 +1,12 @@
 """
-Tech Assisted Audit Tools — Single-File Streamlit Application
+Sox PRogram INtelligent Tester — Single-File Streamlit Application
 =======================================================
 Contains: SSO login, self-service account registration with admin
 approval workflow, password change, Admin Portal (Admin-only),
 Application Dashboard, Saviynt Tool, CM Automation Tool.
 
 Demo credentials (auto-seeded on first run, ./data/users.json):
-    Admin              -> admin1   / Admin@123
+    Admin              -> admin1   / Admin@123456789
 """
 
 import json
@@ -40,6 +40,12 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils.dataframe import dataframe_to_rows
 
+import hmac
+import base64
+import urllib.parse
+import requests
+import streamlit.components.v1 as components
+
 IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
 def now_ist() -> datetime.datetime:
@@ -54,29 +60,70 @@ USERS_FILE = os.path.join(DATA_DIR, "users.json")
 
 ROLE_ADMIN = "Admin"
 ROLE_SOX   = "GEHC IT SOX Team"
-ROLE_USER  = "Rejected User"
+ROLE_USER  = "Regular User"
 ALL_ROLES = [ROLE_ADMIN, ROLE_SOX]
 
-APP_SAVIYNT       = "Access Reconciliation Suite"
-APP_CM_AUTOMATION = "CM Automation"
-ALL_APPS = [APP_SAVIYNT, APP_CM_AUTOMATION]
-SOX_PROVISIONABLE_APPS = [APP_SAVIYNT, APP_CM_AUTOMATION]
+APP_SAVIYNT       = "App Provisioning"
+APP_CM_AUTOMATION = "Change Management"
+APP_NPA_COMPLIANCE = "NPA Vaulting"
+APP_WFH_RECON     = "WFH Reconciliation"
+APP_JCT_RECON     = "JCT Access Reconciliation"
+ALL_APPS = [APP_SAVIYNT, APP_CM_AUTOMATION, APP_NPA_COMPLIANCE, APP_WFH_RECON, APP_JCT_RECON]
+SOX_PROVISIONABLE_APPS = [APP_SAVIYNT, APP_CM_AUTOMATION, APP_NPA_COMPLIANCE, APP_WFH_RECON, APP_JCT_RECON]
 
 STATUS_PENDING  = "pending"
 STATUS_APPROVED = "approved"
 STATUS_REJECTED = "rejected"
 
 
+# ----------------------------------------------------------------------------
+# Password policy parameters
+#   - Minimum password length            : 15 characters
+#   - Maximum password age                : 365 days (forced change after expiry)
+#   - Account lockout threshold           : 5 consecutive failed login attempts
+#   - Account lockout duration            : 10 minutes
+# ----------------------------------------------------------------------------
+MIN_PASSWORD_LENGTH = 15
+PASSWORD_MAX_AGE_DAYS = 365
+FAILED_ATTEMPTS_LIMIT = 5
+LOCKOUT_MINUTES = 10
+PASSWORD_SPECIAL_CHARS = "@#!*&"
+PASSWORD_DIGIT_CHARS = "0123456789"
+
+
 def _hash_password(password: str) -> str:
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+def validate_password_complexity(password: str):
+    """Returns a list of human-readable error messages (empty list = valid).
+    Enforces: minimum length, at least one number (0-9), and at least one
+    special character from PASSWORD_SPECIAL_CHARS (@#!*&)."""
+    errors = []
+    password = password or ""
+    if len(password) < MIN_PASSWORD_LENGTH:
+        errors.append(f"be at least {MIN_PASSWORD_LENGTH} characters long")
+    if not any(ch in PASSWORD_DIGIT_CHARS for ch in password):
+        errors.append("include at least one number (0-9)")
+    if not any(ch in PASSWORD_SPECIAL_CHARS for ch in password):
+        errors.append(f"include at least one special character ({PASSWORD_SPECIAL_CHARS})")
+    return errors
+
+
+def password_complexity_message(errors: list) -> str:
+    if not errors:
+        return ""
+    return "Password must " + "; ".join(errors) + "."
 
 
 def _seed_users():
     return {
         "admin1": {"name": "Portal Administrator", "email": "admin1@gehealthcare.com",
-                   "password_hash": _hash_password("Admin@123"), "role": ROLE_ADMIN,
+                   "password_hash": _hash_password("Admin@123456789"), "role": ROLE_ADMIN,
                    "apps": ALL_APPS.copy(), "active": True, "status": STATUS_APPROVED,
-                   "created_on": now_ist().isoformat()},
+                   "created_on": now_ist().isoformat(),
+                   "password_changed_on": now_ist().isoformat(),
+                   "failed_attempts": 0, "locked_until": None},
     }
 
 
@@ -100,6 +147,15 @@ def load_users() -> dict:
         if "status" not in u:
             u["status"] = STATUS_APPROVED
             needs_resave = True
+        if "password_changed_on" not in u:
+            u["password_changed_on"] = u.get("created_on", now_ist().isoformat())
+            needs_resave = True
+        if "failed_attempts" not in u:
+            u["failed_attempts"] = 0
+            needs_resave = True
+        if "locked_until" not in u:
+            u["locked_until"] = None
+            needs_resave = True
     if needs_resave:
         save_users(users)
     return users
@@ -119,6 +175,60 @@ def get_pending_users() -> dict:
     return {sid: u for sid, u in load_users().items() if u.get("status") == STATUS_PENDING}
 
 
+def _parse_ist_datetime(raw):
+    """Robustly parse a stored ISO datetime string into a timezone-aware IST
+    datetime. Naive (no-offset) legacy timestamps are assumed to already be
+    in IST, avoiding 'can't subtract offset-naive and offset-aware datetimes'."""
+    if not raw:
+        return None
+    try:
+        dt = datetime.datetime.fromisoformat(raw)
+    except Exception:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=IST)
+    else:
+        dt = dt.astimezone(IST)
+    return dt
+
+
+def _is_account_locked(user: dict):
+    """Returns (locked: bool, minutes_remaining: int) based on 'locked_until'."""
+    locked_until = _parse_ist_datetime(user.get("locked_until"))
+    if locked_until is None:
+        return False, 0
+    now = now_ist()
+    if now >= locked_until:
+        return False, 0
+    remaining = int((locked_until - now).total_seconds() // 60) + 1
+    return True, remaining
+
+
+def _register_failed_attempt(sso_key: str, users: dict):
+    user = users[sso_key]
+    attempts = user.get("failed_attempts", 0) + 1
+    user["failed_attempts"] = attempts
+    if attempts >= FAILED_ATTEMPTS_LIMIT:
+        user["locked_until"] = (now_ist() + datetime.timedelta(minutes=LOCKOUT_MINUTES)).isoformat()
+        user["failed_attempts"] = 0
+    save_users(users)
+    return attempts
+
+
+def _reset_failed_attempts(sso_key: str, users: dict):
+    users[sso_key]["failed_attempts"] = 0
+    users[sso_key]["locked_until"] = None
+    save_users(users)
+
+
+def is_password_expired(user: dict) -> bool:
+    """True if the password was last changed more than PASSWORD_MAX_AGE_DAYS days ago."""
+    changed_on = _parse_ist_datetime(user.get("password_changed_on") or user.get("created_on"))
+    if changed_on is None:
+        return False
+    return (now_ist() - changed_on).days >= PASSWORD_MAX_AGE_DAYS
+
+
 def authenticate(sso_id: str, password: str):
     if not sso_id or not sso_id.strip():
         return False, "Please enter your SSO ID."
@@ -133,13 +243,28 @@ def authenticate(sso_id: str, password: str):
         return False, "Invalid SSO ID or Password. Please re-enter correct details."
     if not user.get("active", True):
         return False, "This account has been deactivated. Please contact your Admin."
+
+    locked, minutes_remaining = _is_account_locked(user)
+    if locked:
+        return False, f"This account is locked due to {FAILED_ATTEMPTS_LIMIT} consecutive failed login attempts. Please try again in {minutes_remaining} minute(s)."
+
     if user.get("password_hash") != _hash_password(password):
-        return False, "Invalid SSO ID or Password. Please re-enter correct details."
+        attempts = _register_failed_attempt(sso_key, users)
+        if attempts == 0:
+            return False, f"Invalid SSO ID or Password. Your account has been locked for {LOCKOUT_MINUTES} minutes due to {FAILED_ATTEMPTS_LIMIT} consecutive failed attempts."
+        remaining_tries = FAILED_ATTEMPTS_LIMIT - attempts
+        return False, f"Invalid SSO ID or Password. Please re-enter correct details. ({remaining_tries} attempt(s) remaining before lockout)"
+
     if user.get("status") == STATUS_REJECTED:
         return False, "Your account request was rejected by the Admin. Please contact your Admin team for more details."
 
+    _reset_failed_attempts(sso_key, users)
+    users = load_users()
+    user = users[sso_key]
+
     user_out = dict(user)
     user_out["sso_id"] = sso_key
+    user_out["password_expired"] = is_password_expired(user)
     return True, user_out
 
 
@@ -150,8 +275,9 @@ def register_user(sso_id: str, name: str, email: str, password: str):
         return False, "Please enter your full name."
     if not email or not email.strip():
         return False, "Please enter your email."
-    if not password or len(password) < 6:
-        return False, "Password must be at least 6 characters."
+    pwd_errors = validate_password_complexity(password)
+    if pwd_errors:
+        return False, password_complexity_message(pwd_errors)
 
     sso_key = sso_id.strip().lower()
     users = load_users()
@@ -162,14 +288,18 @@ def register_user(sso_id: str, name: str, email: str, password: str):
         "name": name.strip(), "email": email.strip(), "password_hash": _hash_password(password),
         "role": ROLE_USER, "apps": [], "active": True, "status": STATUS_PENDING,
         "created_on": now_ist().isoformat(),
+        "password_changed_on": now_ist().isoformat(),
+        "failed_attempts": 0, "locked_until": None,
     }
     save_users(users)
     return True, "Your account request has been submitted and sent to the Admin for approval."
 
 
 def change_password(sso_id: str, current_password: str, new_password: str):
-    if not new_password or len(new_password) < 15:
-        return False, "New password must be at least 15 characters."
+    pwd_errors = validate_password_complexity(new_password)
+    if pwd_errors:
+        msg = password_complexity_message(pwd_errors)
+        return False, "New " + msg[0].lower() + msg[1:]
     sso_key = sso_id.strip().lower()
     users = load_users()
     user = users.get(sso_key)
@@ -178,8 +308,11 @@ def change_password(sso_id: str, current_password: str, new_password: str):
     if user.get("password_hash") != _hash_password(current_password):
         return False, "Current password is incorrect."
     user["password_hash"] = _hash_password(new_password)
+    user["password_changed_on"] = now_ist().isoformat()
+    user["failed_attempts"] = 0
+    user["locked_until"] = None
     save_users(users)
-    return True, "Password updated successfully."
+    return True, f"Password updated successfully. It will next need to be changed in {PASSWORD_MAX_AGE_DAYS} days."
 
 
 def add_or_update_user(sso_id: str, name: str, email: str, role: str, apps: list,
@@ -188,15 +321,21 @@ def add_or_update_user(sso_id: str, name: str, email: str, role: str, apps: list
     users = load_users()
     existing = users.get(sso_key, {})
     password_hash = existing.get("password_hash")
+    password_changed_on = existing.get("password_changed_on", now_ist().isoformat())
     if password:
         password_hash = _hash_password(password)
+        password_changed_on = now_ist().isoformat()
     if not password_hash:
-        password_hash = _hash_password("Welcome@123")
+        password_hash = _hash_password("Welcome@123456789")
+        password_changed_on = now_ist().isoformat()
     users[sso_key] = {
         "name": name.strip(), "email": email.strip(), "password_hash": password_hash,
         "role": role, "apps": [a for a in apps if a in ALL_APPS], "active": active,
         "status": status if status else existing.get("status", STATUS_APPROVED),
         "created_on": existing.get("created_on", now_ist().isoformat()),
+        "password_changed_on": password_changed_on,
+        "failed_attempts": existing.get("failed_attempts", 0),
+        "locked_until": existing.get("locked_until", None),
     }
     save_users(users)
     return True
@@ -249,8 +388,13 @@ def set_user_active(sso_id: str, active: bool):
 # ============================================================================
 # SECTION 2 — THEME
 # ============================================================================
-PRIMARY_PURPLE, PRIMARY_PURPLE_DARK, PRIMARY_PURPLE_DARKER = "#5B2A86", "#3B1D57", "#2A1440"
-PRIMARY_PURPLE_LIGHT, PRIMARY_PURPLE_SOFT, ACCENT_LILAC = "#F3EAFB", "#EFE3FA", "#8E5FB5"
+# Professional purple palette (deep purple / plum / lilac accent).
+# NOTE: variable names are kept unchanged on purpose -- every other
+# section of this app (sidebar, banners, cards, buttons, badges) already
+# references these exact names, so re-theming here re-skins the ENTIRE
+# app consistently without touching any other line of code.
+PRIMARY_PURPLE, PRIMARY_PURPLE_DARK, PRIMARY_PURPLE_DARKER = "#6B2FA0", "#3B1D57", "#2A1440"
+PRIMARY_PURPLE_LIGHT, PRIMARY_PURPLE_SOFT, ACCENT_LILAC = "#F3EAFB", "#EFE3FA", "#B47FE0"
 OFF_WHITE, TEXT_DARK, TEXT_MUTED, BORDER_SOFT = "#FAFAFC", "#1F1B24", "#6B6575", "#E4D9F0"
 
 
@@ -303,14 +447,16 @@ def inject_global_css():
         div[data-testid="stMetricValue"] {{ color: {PRIMARY_PURPLE_DARK} !important; font-weight: 800 !important; justify-content: center !important; }}
         hr {{ border: none !important; border-top: 1px solid {BORDER_SOFT} !important; margin: 1.3rem 0 !important; }}
         .portal-header-banner {{ background: linear-gradient(120deg, {PRIMARY_PURPLE}, {PRIMARY_PURPLE_DARK}); color: #FFF; border-radius: 16px; padding: 24px 28px; margin-bottom: 22px; display: flex; align-items: center; gap: 16px; box-shadow: 0 6px 20px rgba(91,42,134,0.28); }}
-        .portal-header-icon {{ width: 50px; height: 50px; border-radius: 14px; background: rgba(255,255,255,0.16); border: 1px solid rgba(255,255,255,0.35); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 19px; color: #FFF; flex-shrink: 0; }}
-        /* Scoped fix: only columns that directly wrap a dashboard .app-tile card
-           get stretched to equal height -- this no longer affects file-uploader
-           columns, the tool top-bar columns, or any other column layout in the
-           app (which was the root cause of the misalignment seen previously). */
+        .portal-header-icon {{ width: 62px; height: 50px; border-radius: 14px; background: rgba(255,255,255,0.16); border: 1px solid rgba(255,255,255,0.35); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 15px; letter-spacing: 0.5px; color: #FFF; flex-shrink: 0; }}
+        /* Dashboard app-tile cards: fixed height + flex column layout so every
+           card in a row is pixel-identical regardless of title/description
+           length -- this guarantees the "Open ..." buttons below each card
+           always start at the exact same vertical position across all
+           columns. Also stretch the column itself for extra safety on
+           browsers that support :has(). */
         div[data-testid="column"]:has(.app-tile) {{ display: flex; }}
         div[data-testid="column"]:has(.app-tile) > div {{ width: 100%; }}
-        .app-tile {{ background: #FFF; border: 1px solid {BORDER_SOFT}; border-radius: 16px; padding: 24px 20px; text-align: center; box-shadow: 0 3px 12px rgba(91,42,134,0.07); transition: all 0.18s ease-in-out; display: flex; flex-direction: column; align-items: center; height: 100%; min-height: 210px; }}
+        .app-tile {{ background: #FFF; border: 1px solid {BORDER_SOFT}; border-radius: 16px; padding: 24px 20px; text-align: center; box-shadow: 0 3px 12px rgba(91,42,134,0.07); transition: all 0.18s ease-in-out; display: flex; flex-direction: column; align-items: center; height: 278px; box-sizing: border-box; }}
 
         /* Normalize widget label height so columns with a longer (2-line) label
            next to columns with a short (1-line) label still start their input/
@@ -321,8 +467,8 @@ def inject_global_css():
         div[data-testid="stFileUploader"] section {{ margin-top: 0 !important; }}
         .app-tile:hover {{ box-shadow: 0 10px 26px rgba(91,42,134,0.18); transform: translateY(-2px); border-color: {PRIMARY_PURPLE}; }}
         .app-tile-icon-badge {{ width: 54px; height: 54px; border-radius: 14px; background: linear-gradient(135deg, {PRIMARY_PURPLE_SOFT}, #FFF); border: 1px solid {BORDER_SOFT}; display: flex; align-items: center; justify-content: center; font-size: 25px; margin-bottom: 12px; flex-shrink: 0; }}
-        .app-tile-title {{ font-weight: 700; font-size: 16px; color: {TEXT_DARK}; margin-bottom: 8px; }}
-        .app-tile-desc {{ font-size: 13px; color: {TEXT_MUTED}; line-height: 1.5; flex-grow: 1; }}
+        .app-tile-title {{ font-weight: 700; font-size: 16px; color: {TEXT_DARK}; margin-bottom: 8px; height: 40px; display: flex; align-items: center; justify-content: center; line-height: 1.25; }}
+        .app-tile-desc {{ font-size: 13px; color: {TEXT_MUTED}; line-height: 1.5; flex-grow: 1; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; }}
         .role-badge {{ display: inline-block; background: {PRIMARY_PURPLE_LIGHT} !important; color: {PRIMARY_PURPLE_DARK} !important; border: 1px solid {PRIMARY_PURPLE}; border-radius: 999px; padding: 3px 14px; font-size: 12px; font-weight: 700; }}
         .breadcrumb-text {{ font-size: 14px; color: {TEXT_MUTED}; padding-top: 10px; }}
         .breadcrumb-text .current {{ color: {PRIMARY_PURPLE_DARK}; font-weight: 700; }}
@@ -330,6 +476,108 @@ def inject_global_css():
         .pending-card {{ background: {PRIMARY_PURPLE_SOFT}; border-left: 5px solid {PRIMARY_PURPLE}; border-radius: 14px; padding: 22px 26px; margin: 10px 0 20px 0; }}
         .request-card {{ border: 1px solid {BORDER_SOFT}; border-radius: 14px; padding: 16px 18px; margin-bottom: 14px; background: #FFFFFF; }}
         .pending-badge {{ display: inline-block; background: #D64545; color: #FFF; border-radius: 999px; font-size: 10.5px; font-weight: 700; padding: 1px 7px; margin-left: 6px; vertical-align: middle; }}
+
+        /* ================================================================
+           PROFESSIONAL VISUAL POLISH LAYER (GE HealthCare-inspired theme)
+           -- purely additive, refines look & feel without altering any
+           existing selectors, structure, or app behavior.
+        ================================================================ */
+
+        /* Custom, subtle scrollbar for a more polished, modern feel */
+        ::-webkit-scrollbar {{ width: 10px; height: 10px; }}
+        ::-webkit-scrollbar-track {{ background: {OFF_WHITE}; }}
+        ::-webkit-scrollbar-thumb {{ background: linear-gradient(180deg, {ACCENT_LILAC}, {PRIMARY_PURPLE}); border-radius: 8px; }}
+        ::-webkit-scrollbar-thumb:hover {{ background: {PRIMARY_PURPLE_DARK}; }}
+
+        /* Subtle top accent strip under the Streamlit header for a branded, "hero" feel */
+        header[data-testid="stHeader"] {{ border-bottom: 3px solid {ACCENT_LILAC} !important; }}
+
+        /* Sidebar: cyan accent divider glow + refined avatar ring */
+        .sidebar-user-card {{ box-shadow: 0 4px 18px rgba(0,0,0,0.18); position: relative; overflow: hidden; }}
+        .sidebar-user-card::before {{ content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, {ACCENT_LILAC}, {PRIMARY_PURPLE_LIGHT}); }}
+        .sidebar-avatar {{ box-shadow: 0 0 0 4px rgba(255,255,255,0.08), 0 6px 16px rgba(0,0,0,0.30) !important; }}
+
+        /* Hero-style header banner: layered gradient + soft glow + accent underline for a premium feel */
+        .portal-header-banner {{ position: relative; overflow: hidden; }}
+        .portal-header-banner::after {{ content: ""; position: absolute; top: -60%; right: -10%; width: 260px; height: 260px; background: radial-gradient(circle, rgba(255,255,255,0.16), transparent 70%); pointer-events: none; }}
+        .portal-header-banner::before {{ content: ""; position: absolute; left: 0; bottom: 0; width: 100%; height: 4px; background: linear-gradient(90deg, {ACCENT_LILAC}, rgba(255,255,255,0.05)); }}
+        .portal-header-icon {{ box-shadow: 0 4px 14px rgba(0,0,0,0.25), inset 0 0 0 1px rgba(255,255,255,0.25); }}
+
+        /* Buttons: refined gradient + cyan-tinted hover glow for a livelier, premium interaction */
+        .stButton > button, div[data-testid="stFormSubmitButton"] button {{ position: relative; letter-spacing: 0.2px; }}
+        .stButton > button:hover, div[data-testid="stFormSubmitButton"] button:hover {{ box-shadow: 0 6px 18px rgba(180,127,224,0.35), 0 4px 12px rgba(59,29,87,0.35) !important; }}
+        .stButton > button:active, div[data-testid="stFormSubmitButton"] button:active {{ transform: translateY(0) !important; }}
+
+        /* Dashboard app-tiles: cyan accent bar on top + smoother lift + icon-badge glow on hover */
+        .app-tile {{ position: relative; border-top: 3px solid transparent; transition: border-color 0.2s ease-in-out, box-shadow 0.2s ease-in-out, transform 0.2s ease-in-out; }}
+        .app-tile:hover {{ border-top-color: {ACCENT_LILAC}; }}
+        .app-tile:hover .app-tile-icon-badge {{ box-shadow: 0 6px 16px rgba(180,127,224,0.35); transform: scale(1.05); transition: all 0.2s ease-in-out; }}
+        .app-tile-icon-badge {{ transition: all 0.2s ease-in-out; }}
+
+        /* ================================================================
+           APPLICATION TILE -- card + fused "Use this tool" button --------
+           The tile's icon badge / eyebrow / title / description are plain
+           HTML (see .app-tile / .app-tile-fused below), and a native
+           Streamlit button ("Use this tool") is rendered immediately under
+           it. These rules fuse the two into one seamless card: the card's
+           bottom corners are squared off and its bottom border removed, the
+           button is pulled up flush against it (no gap, shared border) with
+           its own corners rounded only at the bottom -- so together they
+           read as a single, clean, professionally-styled card+action unit
+           that lifts and glows subtly on hover.
+        ================================================================ */
+        .app-tile-fused {{ border-radius: 16px 16px 0 0; border-bottom: none; padding-bottom: 22px; }}
+        .app-tile-eyebrow {{ font-size: 11px; font-weight: 700; letter-spacing: 1px; color: {PRIMARY_PURPLE}; text-transform: uppercase; margin-bottom: 6px; }}
+        div[data-testid="column"]:has(.app-tile-fused) div[data-testid="stButton"] {{ margin-top: -1px; }}
+        div[data-testid="column"]:has(.app-tile-fused) div[data-testid="stButton"] > button {{
+            background: #FFFFFF !important;
+            color: {TEXT_DARK} !important;
+            border: 1px solid {BORDER_SOFT} !important;
+            border-top: 1px solid {BORDER_SOFT} !important;
+            border-radius: 0 0 16px 16px !important;
+            font-weight: 500 !important;
+            font-size: 14.5px !important;
+            letter-spacing: 0.2px !important;
+            box-shadow: none !important;
+            padding: 0.7rem 1.2rem !important;
+            transition: all 0.18s ease-in-out !important;
+        }}
+        div[data-testid="column"]:has(.app-tile-fused) div[data-testid="stButton"] > button:hover {{
+            background: {PRIMARY_PURPLE_SOFT} !important;
+            color: {PRIMARY_PURPLE_DARK} !important;
+            border-color: {PRIMARY_PURPLE} !important;
+        }}
+        div[data-testid="column"]:has(.app-tile-fused) div[data-testid="stButton"] > button:focus-visible {{
+            box-shadow: 0 0 0 3px rgba(107,47,160,0.22) !important;
+        }}
+        div[data-testid="column"]:has(.app-tile-fused):hover .app-tile-fused {{
+            border-color: {PRIMARY_PURPLE} !important;
+            box-shadow: 0 10px 26px rgba(91,42,134,0.14) !important;
+            transform: translateY(-2px);
+        }}
+        div[data-testid="column"]:has(.app-tile-fused):hover div[data-testid="stButton"] > button {{
+            border-color: {PRIMARY_PURPLE} !important;
+        }}
+
+        /* Metrics: cyan left accent bar for a modern dashboard/KPI feel */
+        div[data-testid="stMetric"] {{ border-left: 4px solid {ACCENT_LILAC} !important; text-align: left !important; padding-left: 18px !important; }}
+        div[data-testid="stMetricLabel"] {{ justify-content: flex-start !important; }}
+        div[data-testid="stMetricValue"] {{ justify-content: flex-start !important; }}
+
+        /* Login card: soft ambient glow + subtle top accent line for a premium entry point */
+        div[data-testid="stVerticalBlockBorderWrapper"] {{ position: relative; }}
+        div[data-testid="stVerticalBlockBorderWrapper"]::before {{ content: ""; position: absolute; top: 0; left: 14px; right: 14px; height: 3px; border-radius: 0 0 6px 6px; background: linear-gradient(90deg, {PRIMARY_PURPLE}, {ACCENT_LILAC}); }}
+
+        /* Gentle fade/slide-in for the main content area on each render, for a livelier, "app-like" feel */
+        @keyframes geFadeInUp {{ from {{ opacity: 0; transform: translateY(6px); }} to {{ opacity: 1; transform: translateY(0); }} }}
+        .block-container {{ animation: geFadeInUp 0.35s ease-out; }}
+
+        /* Login hero backdrop: soft radial brand glow behind the sign-in card */
+        .stApp {{ background: radial-gradient(1100px 480px at 50% -6%, rgba(107,47,160,0.08), transparent 60%), linear-gradient(180deg, {OFF_WHITE} 0%, #FFF 260px); }}
+
+        /* Brand footer tag shown under the login card */
+        .ge-brand-footer {{ text-align: center; margin-top: 22px; font-size: 11.5px; color: {TEXT_MUTED}; letter-spacing: 0.3px; }}
+        .ge-brand-footer b {{ color: {PRIMARY_PURPLE_DARK}; }}
         </style>
         """, unsafe_allow_html=True)
 
@@ -337,13 +585,280 @@ def inject_global_css():
 def render_header_banner(title: str, subtitle: str = ""):
     st.markdown(f"""
         <div class="portal-header-banner">
-            <div class="portal-header-icon">GE</div>
+            <div class="portal-header-icon">GEHC</div>
             <div>
-                <div style="color:#E4D2F5;font-size:12px;letter-spacing:1.1px;text-transform:uppercase;font-weight:600;">{subtitle}</div>
-                <div style="color:#FFF;font-size:24px;font-weight:800;line-height:1.3;">{title}</div>
+                <div style="color:#EFE3FA;font-size:12px;letter-spacing:1.4px;text-transform:uppercase;font-weight:700;">{subtitle}</div>
+                <div style="color:#FFF;font-size:25px;font-weight:800;line-height:1.3;letter-spacing:-0.2px;">{title}</div>
             </div>
         </div>
         """, unsafe_allow_html=True)
+
+
+
+# ============================================================================
+# SECTION 2B — GE HEALTHCARE SSO (OIDC / PingFederate) AUTHENTICATION
+# ----------------------------------------------------------------------------
+# Implements the interactive OIDC authorization-code login flow described in
+# gehealthcare_sso_authentication_codex_guide.md, adapted to this single-page
+# Streamlit app (no Flask routes -- the OIDC redirect lands back on this same
+# app URL and is detected via st.query_params).
+#
+# Fully additive / backward compatible: if GEHC_OIDC_ENABLED is not set to
+# "true", none of this is shown or used and the existing local SSO ID +
+# Password login continues to work exactly as before.
+#
+# Required environment variables (see the guide for full details):
+#   GEHC_OIDC_ENABLED             "true" to enable the SSO button
+#   GEHC_BASE_URL                 externally reachable HTTPS base URL of this
+#                                  app, no trailing slash (must match the AMP
+#                                  Portal redirect URI host)
+#   GEHC_OIDC_CLIENT_ID           AMP Portal OAuth client ID
+#   GEHC_OIDC_CLIENT_SECRET       AMP Portal OAuth client secret (store in a
+#                                  secret manager, inject as an env var --
+#                                  never commit this value)
+# Optional overrides:
+#   GEHC_OIDC_ISSUER                    default: https://efs.sso.gehealthcare.com/fss
+#   GEHC_OIDC_SCOPE                     default: "openid profile email"
+#   GEHC_OIDC_USERINFO_URL              default: <issuer>/idp/userinfo.openid
+#   GEHC_OIDC_CALLBACK_PATH              default: "" (redirect_uri = GEHC_BASE_URL)
+#   GEHC_OIDC_AUTHORIZATION_ENDPOINT     override for the authorization endpoint
+#   GEHC_OIDC_TOKEN_ENDPOINT             override for the token endpoint
+# ============================================================================
+GEHC_OIDC_DEFAULT_ISSUER = "https://efs.sso.gehealthcare.com/fss"
+GEHC_OIDC_DEFAULT_AUTHORIZATION_ENDPOINT = "https://efs.sso.gehealthcare.com/fss/as/authorization.oauth2"
+GEHC_OIDC_DEFAULT_TOKEN_ENDPOINT = "https://efs.sso.gehealthcare.com/fss/as/token.oauth2"
+GEHC_OIDC_DEFAULT_USERINFO_URL = "https://efs.sso.gehealthcare.com/fss/idp/userinfo.openid"
+GEHC_OIDC_DEFAULT_SCOPE = "openid profile email"
+
+# Claim mapping (checked in this order) per the guide.
+GEHC_SSO_CLAIM_KEYS = ["sso", "sso_id", "SSO", "uid", "sub", "username",
+                       "preferred_username", "employee_number", "employeeNumber", "ge_sso"]
+GEHC_NAME_CLAIM_KEYS = ["cn", "name", "display_name", "displayName"]
+GEHC_EMAIL_CLAIM_KEYS = ["mail", "email", "upn"]
+
+
+def _gehc_oidc_config():
+    """Read GEHC OIDC settings from the environment. Returns None if the
+    integration is not enabled/configured (in which case the SSO button is
+    simply not shown -- the existing local login keeps working)."""
+    enabled = os.environ.get("GEHC_OIDC_ENABLED", "false").strip().lower() == "true"
+    client_id = os.environ.get("GEHC_OIDC_CLIENT_ID", "").strip()
+    if not enabled or not client_id:
+        return None
+
+    base_url = os.environ.get("GEHC_BASE_URL", "").strip().rstrip("/")
+    if not base_url:
+        return None
+
+    issuer = os.environ.get("GEHC_OIDC_ISSUER", GEHC_OIDC_DEFAULT_ISSUER).strip().rstrip("/")
+    callback_path = os.environ.get("GEHC_OIDC_CALLBACK_PATH", "").strip()
+
+    return {
+        "issuer": issuer,
+        "client_id": client_id,
+        "client_secret": os.environ.get("GEHC_OIDC_CLIENT_SECRET", "").strip(),
+        "scope": os.environ.get("GEHC_OIDC_SCOPE", GEHC_OIDC_DEFAULT_SCOPE).strip(),
+        "redirect_uri": base_url + callback_path,
+        "authorization_endpoint_override": os.environ.get("GEHC_OIDC_AUTHORIZATION_ENDPOINT", "").strip(),
+        "token_endpoint_override": os.environ.get("GEHC_OIDC_TOKEN_ENDPOINT", "").strip(),
+        "userinfo_url": os.environ.get("GEHC_OIDC_USERINFO_URL", GEHC_OIDC_DEFAULT_USERINFO_URL).strip(),
+    }
+
+
+def _gehc_oidc_discover(issuer: str):
+    """Try OIDC discovery first; fall back to the PingFederate default
+    authorization/token endpoints per the guide."""
+    try:
+        resp = requests.get(f"{issuer}/.well-known/openid-configuration", timeout=6)
+        if resp.ok:
+            meta = resp.json()
+            return {
+                "authorization_endpoint": meta.get("authorization_endpoint", GEHC_OIDC_DEFAULT_AUTHORIZATION_ENDPOINT),
+                "token_endpoint": meta.get("token_endpoint", GEHC_OIDC_DEFAULT_TOKEN_ENDPOINT),
+            }
+    except Exception:
+        pass
+    return {
+        "authorization_endpoint": GEHC_OIDC_DEFAULT_AUTHORIZATION_ENDPOINT,
+        "token_endpoint": GEHC_OIDC_DEFAULT_TOKEN_ENDPOINT,
+    }
+
+
+def _gehc_build_authorization_url(cfg: dict) -> str:
+    meta = _gehc_oidc_discover(cfg["issuer"])
+    auth_endpoint = cfg["authorization_endpoint_override"] or meta["authorization_endpoint"]
+
+    state = base64.urlsafe_b64encode(os.urandom(24)).decode("utf-8").rstrip("=")
+    nonce = base64.urlsafe_b64encode(os.urandom(24)).decode("utf-8").rstrip("=")
+    st.session_state["gehc_oidc_state"] = state
+    st.session_state["gehc_oidc_nonce"] = nonce
+    st.session_state["gehc_oidc_token_endpoint"] = cfg["token_endpoint_override"] or meta["token_endpoint"]
+
+    params = {
+        "response_type": "code",
+        "client_id": cfg["client_id"],
+        "redirect_uri": cfg["redirect_uri"],
+        "scope": cfg["scope"],
+        "state": state,
+        "nonce": nonce,
+    }
+    return f"{auth_endpoint}?{urllib.parse.urlencode(params)}"
+
+
+def _gehc_exchange_code_for_token(cfg: dict, code: str, token_endpoint: str):
+    data = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": cfg["redirect_uri"],
+        "client_id": cfg["client_id"],
+        "client_secret": cfg["client_secret"],
+    }
+    resp = requests.post(token_endpoint, data=data, timeout=10,
+                          headers={"Content-Type": "application/x-www-form-urlencoded"})
+    if not resp.ok:
+        return None, f"Token exchange failed (HTTP {resp.status_code}). Check the client secret and callback URL configuration."
+    token_json = resp.json()
+    if not token_json.get("access_token"):
+        return None, "Token exchange failed: no access_token in response."
+    return token_json, None
+
+
+def _gehc_fetch_userinfo(cfg: dict, access_token: str):
+    try:
+        resp = requests.get(cfg["userinfo_url"], timeout=10,
+                             headers={"Authorization": f"Bearer {access_token}"})
+    except Exception as e:
+        return None, f"Userinfo request failed: {e}"
+    if not resp.ok:
+        return None, f"Userinfo request failed (HTTP {resp.status_code})."
+    return resp.json(), None
+
+
+def _gehc_extract_sso_id(claims: dict):
+    for key in GEHC_SSO_CLAIM_KEYS:
+        val = claims.get(key)
+        if val and re.fullmatch(r"\d{9}", str(val).strip()):
+            return str(val).strip()
+    return None
+
+
+def _gehc_extract_display_name(claims: dict, sso_id: str):
+    for key in GEHC_NAME_CLAIM_KEYS:
+        val = claims.get(key)
+        if val:
+            return str(val).strip()
+    given = claims.get("given_name", "")
+    family = claims.get("family_name", "")
+    combined = f"{given} {family}".strip()
+    return combined if combined else sso_id
+
+
+def _gehc_extract_email(claims: dict):
+    for key in GEHC_EMAIL_CLAIM_KEYS:
+        val = claims.get(key)
+        if val:
+            return str(val).strip()
+    return ""
+
+
+def _gehc_upsert_sso_user(sso_id: str, name: str, email: str):
+    """Create (as pending, awaiting Admin approval -- same workflow as local
+    self-registration) or refresh the local profile for a GEHC SSO user, then
+    return the same shape authenticate() returns on success."""
+    sso_key = sso_id.strip().lower()
+    users = load_users()
+    if sso_key not in users:
+        users[sso_key] = {
+            "name": name or sso_key, "email": email, "password_hash": "",
+            "role": ROLE_USER, "apps": [], "active": True, "status": STATUS_PENDING,
+            "created_on": now_ist().isoformat(),
+        }
+        save_users(users)
+    else:
+        if name:
+            users[sso_key]["name"] = name
+        if email:
+            users[sso_key]["email"] = email
+        save_users(users)
+
+    user_out = dict(load_users()[sso_key])
+    user_out["sso_id"] = sso_key
+    return user_out
+
+
+def _render_gehc_sso_button():
+    """Shows the 'Sign in with GE HealthCare SSO' entry point if configured.
+    No-op (renders nothing) when GEHC OIDC is not enabled/configured."""
+    cfg = _gehc_oidc_config()
+    if not cfg:
+        return
+    st.markdown(f"<div style='text-align:center;color:{TEXT_MUTED};font-size:12px;margin:14px 0 10px 0;'>— or —</div>", unsafe_allow_html=True)
+    try:
+        auth_url = _gehc_build_authorization_url(cfg)
+        st.link_button("🔒 Sign in with GE HealthCare SSO", auth_url, use_container_width=True)
+    except Exception as e:
+        st.caption(f"GE HealthCare SSO is temporarily unavailable ({e}).")
+
+
+def _handle_gehc_oidc_callback():
+    """Detects and processes the OIDC redirect (?code=...&state=...) landing
+    back on this app. Safe to call unconditionally on every rerun -- it is a
+    no-op unless the query params it looks for are present."""
+    if st.session_state.get("authenticated"):
+        return
+
+    cfg = _gehc_oidc_config()
+    if not cfg:
+        return
+
+    q = st.query_params
+    if "error" in q:
+        st.session_state.login_error = f"GE HealthCare SSO sign-in was cancelled or failed: {q.get('error')}"
+        st.query_params.clear()
+        return
+
+    code = q.get("code")
+    state = q.get("state")
+    if not code or not state:
+        return
+
+    expected_state = st.session_state.get("gehc_oidc_state")
+    if not expected_state or state != expected_state:
+        st.session_state.login_error = "GE HealthCare SSO sign-in failed: invalid state. Please try signing in again."
+        st.query_params.clear()
+        return
+
+    token_endpoint = st.session_state.get("gehc_oidc_token_endpoint") or GEHC_OIDC_DEFAULT_TOKEN_ENDPOINT
+    token_json, err = _gehc_exchange_code_for_token(cfg, code, token_endpoint)
+    if err:
+        st.session_state.login_error = f"GE HealthCare SSO sign-in failed: {err}"
+        st.query_params.clear()
+        return
+
+    claims, err = _gehc_fetch_userinfo(cfg, token_json["access_token"])
+    if err:
+        st.session_state.login_error = f"GE HealthCare SSO sign-in failed: {err}"
+        st.query_params.clear()
+        return
+
+    sso_id = _gehc_extract_sso_id(claims)
+    if not sso_id:
+        st.session_state.login_error = "GE HealthCare SSO sign-in failed: could not find a valid 9-digit GEHC SSO ID in your profile."
+        st.query_params.clear()
+        return
+
+    name = _gehc_extract_display_name(claims, sso_id)
+    email = _gehc_extract_email(claims)
+    user_out = _gehc_upsert_sso_user(sso_id, name, email)
+
+    st.session_state.authenticated = True
+    st.session_state.current_user = user_out
+    st.session_state.plain_password = ""
+    st.session_state.login_error = ""
+    for k in ("gehc_oidc_state", "gehc_oidc_nonce", "gehc_oidc_token_endpoint"):
+        st.session_state.pop(k, None)
+    st.query_params.clear()
+    st.rerun()
 
 
 # ============================================================================
@@ -351,6 +866,8 @@ def render_header_banner(title: str, subtitle: str = ""):
 # ============================================================================
 
 def _render_sign_in_tab():
+    _render_gehc_sso_button()
+
     with st.form("login_form", clear_on_submit=False):
         sso_id = st.text_input("SSO ID", key="login_sso_input")
         password = st.text_input("Password", type="password", placeholder="Enter your password", key="login_pwd_input")
@@ -363,6 +880,7 @@ def _render_sign_in_tab():
             st.session_state.current_user = result
             st.session_state.plain_password = password
             st.session_state.login_error = ""
+            st.session_state.must_change_password = bool(result.get("password_expired"))
             st.rerun()
         else:
             st.session_state.login_error = result
@@ -378,7 +896,7 @@ def _render_create_account_tab():
         reg_sso_id = st.text_input("Choose an SSO ID *", key="reg_sso_input")
         reg_name = st.text_input("Full Name *", key="reg_name_input")
         reg_email = st.text_input("Email *", key="reg_email_input")
-        reg_password = st.text_input("Password *", type="password", placeholder="At least 15 characters", key="reg_pwd_input")
+        reg_password = st.text_input("Password *", type="password", placeholder=f"At least {MIN_PASSWORD_LENGTH} chars, 1 number, 1 special ({PASSWORD_SPECIAL_CHARS})", key="reg_pwd_input")
         reg_password_confirm = st.text_input("Confirm Password *", type="password", key="reg_pwd_confirm_input")
         reg_submitted = st.form_submit_button("Create Account", use_container_width=True)
 
@@ -412,10 +930,10 @@ def render_login_page():
     col_l, col_mid, col_r = st.columns([1, 1.3, 1])
     with col_mid:
         st.markdown(f"""
-            <div style="text-align:center;margin-bottom:20px;">
-                <div style="width:62px;height:62px;border-radius:16px;margin:0 auto 12px auto;background:linear-gradient(135deg,{PRIMARY_PURPLE},{PRIMARY_PURPLE_DARK});display:flex;align-items:center;justify-content:center;font-weight:800;font-size:23px;color:#FFF;box-shadow:0 8px 20px rgba(91,42,134,0.30);">GE</div>
-                <div style="font-size:21px;font-weight:800;color:{PRIMARY_PURPLE_DARK};">Tech Assisted Audit Tools</div>
-                <div style="font-size:12.5px;color:{TEXT_MUTED};text-transform:uppercase;letter-spacing:0.4px;margin-top:2px;">GEHC IT SOX Team</div>
+            <div style="text-align:center;margin-bottom:22px;">
+                <div style="width:80px;height:66px;border-radius:18px;margin:0 auto 14px auto;background:linear-gradient(135deg,{PRIMARY_PURPLE},{PRIMARY_PURPLE_DARK});display:flex;align-items:center;justify-content:center;font-weight:800;font-size:19px;letter-spacing:0.5px;color:#FFF;box-shadow:0 10px 26px rgba(59,29,87,0.35),0 0 0 6px rgba(180,127,224,0.18);">GEHC</div>
+                <div style="font-size:22px;font-weight:800;color:{PRIMARY_PURPLE_DARK};letter-spacing:-0.2px;">SPRINT | SOX Program Intelligent Tester</div>
+                <div style="display:inline-block;margin-top:8px;padding:3px 14px;border-radius:999px;background:{PRIMARY_PURPLE_LIGHT};font-size:11.5px;color:{PRIMARY_PURPLE_DARK};text-transform:uppercase;letter-spacing:0.6px;font-weight:700;">Intelligent SOX Testing. At Speed.</div>
             </div>
             """, unsafe_allow_html=True)
 
@@ -432,8 +950,14 @@ def render_login_page():
             st.markdown(
                 "- If you already have an account, simply log in to start using the platform.\n"
                 "- If you do not have an account, create one and submit your registration request. An administrator will review and approve your request. Once approved, you can log in and access the platform.\n"
-                "- After logging in, select the tool you want to use and get started."
+                "- After logging in, select the tool you want to use and get started.\n"
+                "- Your password must be at least 15 characters and include 1 number and 1 special character."
             )
+
+        st.markdown(
+            f"<div class='ge-brand-footer'>Secured by <b>Local Authentication</b> &nbsp;·&nbsp; SPRINT</div>",
+            unsafe_allow_html=True,
+        )
 
 
 # ============================================================================
@@ -614,10 +1138,13 @@ def _render_manage_existing_users(users: dict, current_role: str):
 # ============================================================================
 # SECTION 5 — APPLICATION DASHBOARD
 # ============================================================================
-APP_ICONS = {APP_SAVIYNT: "🛡️", APP_CM_AUTOMATION: "⚙️"}
+APP_ICONS = {APP_SAVIYNT: "🛡️", APP_CM_AUTOMATION: "⚙️", APP_NPA_COMPLIANCE: "🔑", APP_WFH_RECON: "🏠", APP_JCT_RECON: "🧭"}
 APP_DESCRIPTIONS = {
     APP_SAVIYNT: "App provisioning testing: Validate access requests for Saviynt based approvals, roles provisioned and export the results in an excel report.",
     APP_CM_AUTOMATION: "Change Management SOX testing: Parse change tickets (PDF), perform IT SOD check, validate CAB approvals and export the results in an excel report. ",
+    APP_NPA_COMPLIANCE: "NPA password policy compliance: Classify Non-Personal Accounts, reconcile them against CyberArk, and check password policy compliance -- all in-browser.",
+    APP_WFH_RECON: "WFH access reconciliation: Compare a User List against a WFH Report, recheck any gaps against Offline Approvals, and export the final exceptions report.",
+    APP_JCT_RECON: "JCT access reconciliation: Compare a JCT Report against a User List (SSO), cross-check a User List against a WFH Report (SSO | Role), and export the combined exceptions report.",
 }
 
 
@@ -663,6 +1190,12 @@ def _render_tool_page(active_tool: str):
         render_saviynt_tool()
     elif active_tool == APP_CM_AUTOMATION:
         render_cm_automation_tool()
+    elif active_tool == APP_NPA_COMPLIANCE:
+        render_npa_compliance_tool()
+    elif active_tool == APP_WFH_RECON:
+        render_wfh_reconciliation_tool()
+    elif active_tool == APP_JCT_RECON:
+        render_jct_reconciliation_tool()
 
 
 def render_dashboard():
@@ -679,23 +1212,29 @@ def render_dashboard():
     st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
 
     if not user_apps:
-        st.warning("You currently have no application access assigned. Please contact your Admin or the GEHC IT SOX Team to request access.")
+        st.warning("You currently have no application access assigned. Please contact your Admin to request access.")
         return
 
     st.subheader("Your Applications")
+    #st.caption("Click on any tile below to open that tool.")
     cols = st.columns(2) if len(user_apps) <= 2 else st.columns(3)
     for i, app_name in enumerate(user_apps):
         col = cols[i % len(cols)]
         with col:
+            # Card (icon badge, eyebrow, title, description) is plain HTML,
+            # seamlessly fused -- no gap, shared border -- to a native
+            # Streamlit "Use this tool" button directly beneath it, so the
+            # whole thing reads and looks like ONE unified card while still
+            # being backed by a single, real, fully clickable action button.
             st.markdown(f"""
-                <div class="app-tile">
+                <div class="app-tile app-tile-fused">
                     <div class="app-tile-icon-badge">{APP_ICONS.get(app_name, "📦")}</div>
+                    <div class="app-tile-eyebrow">APPLICATION</div>
                     <div class="app-tile-title">{app_name}</div>
                     <div class="app-tile-desc">{APP_DESCRIPTIONS.get(app_name, "")}</div>
                 </div>
                 """, unsafe_allow_html=True)
-            st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
-            if st.button(f"Open {app_name}", key=f"open_{app_name}", use_container_width=True):
+            if st.button("Click Here", key=f"open_{app_name}", use_container_width=True, help=f"Open {app_name}"):
                 st.session_state.active_tool = app_name
                 st.rerun()
 
@@ -3810,9 +4349,1458 @@ def render_cm_automation_tool():
 
 
 # ============================================================================
+# SECTION 8: NPA COMPLIANCE TOOL (NPA Password Policy Compliance Checker)
+# ============================================================================
+def render_npa_compliance_tool():
+   # st.markdown("### 🔑 NPA Password Policy Compliance Checker")
+    #st.caption("Upload the 3 source files to classify Non-Personal Accounts (NPAs), reconcile them against CyberArk, and check password policy compliance. Everything runs locally in your browser -- files are not uploaded anywhere.")
+
+    _npa_html = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>NPA Password Policy Compliance Checker</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px; background: #f7f8fa; color: #1f2430;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: #666; font-size: 13px; margin-bottom: 20px; }
+  .card {
+    background: #fff; border: 1px solid #e3e5e9; border-radius: 10px;
+    padding: 20px; margin-bottom: 16px;
+  }
+  .card h2 { font-size: 14px; margin: 0 0 12px; color: #333; }
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; color: #333; }
+  .field .hint { font-size: 12px; color: #888; margin-top: 3px; }
+  input[type=file] {
+    width: 100%; font-size: 13px; padding: 8px; border: 1px dashed #c7cad1;
+    border-radius: 8px; background: #fafbfc;
+  }
+  button {
+    background: #4a5568; color: #fff; border: none; padding: 10px 18px;
+    border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  button:hover { background: #333c48; }
+  button:disabled { background: #b7bcc4; cursor: not-allowed; }
+  button.secondary { background: #2f855a; }
+  button.secondary:hover { background: #276749; }
+  #status { font-size: 13px; margin-top: 10px; color: #555; white-space: pre-line; }
+  #status.err { color: #c53030; }
+  .stats { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
+  .stat { flex: 1 1 120px; background: #f4f5f7; border-radius: 8px; padding: 12px; text-align: center; }
+  .stat .num { font-size: 20px; font-weight: 700; }
+  .stat .lbl { font-size: 11px; color: #777; margin-top: 2px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 14px; }
+  th, td { border: 1px solid #e3e5e9; padding: 6px 8px; text-align: left; white-space: nowrap; }
+  th { background: #919aab; color: #fff; position: sticky; top: 0; }
+  tr.pass td.remarks { background: #c6efce; }
+  tr.fail td.remarks { background: #ffc7ce; }
+  .table-scroll { max-height: 480px; overflow: auto; border: 1px solid #e3e5e9; border-radius: 8px; }
+  .actions { display: flex; gap: 10px; margin-top: 16px; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>NPA Password Policy Compliance Checker</h1>
+  <div class="sub">Upload the 3 source files to classify Non-Personal Accounts (NPAs), reconcile them against CyberArk, and check password policy compliance. Everything runs locally in your browser — files are not uploaded anywhere.</div>
+
+  <div class="card">
+    <h2>1. Inputs</h2>
+    <div class="field">
+      <label>Comprehensive User List(s) — CSV or XLSX, one per application</label>
+      <input type="file" id="userListFiles" accept=".csv,.xlsx" multiple>
+      <div class="hint">Two layouts are supported. (1) Single-column list: a column named "Name", "SSO", or "User" — only that column is used, and an account is SSO only if it is exactly 9 digits; everything else is an NPA. (2) Two-column "GEHC-External" / "GEHC-LDAP" list: "GEHC-External" is the account identifier, classified using "GEHC-LDAP" (9 digits = tied to a real SSO, excluded; anything else = NPA). App name is derived from each file's name.</div>
+    </div>
+    <div class="field">
+      <label>CyberArk Inventory Report</label>
+      <input type="file" id="inventoryFile" accept=".xls,.xml">
+      <div class="hint">Excel "XML Spreadsheet" export with columns: Safe, Platform ID, Target system user name.</div>
+    </div>
+    <div class="field">
+      <label>Platform Details</label>
+      <input type="file" id="platformFile" accept=".csv">
+      <div class="hint">CSV with columns: Name, CredentialsManagementPolicy.change.RequirePasswordEveryXDays, PasswordLength.</div>
+    </div>
+    <button id="runBtn">Run Compliance Check</button>
+    <div id="status"></div>
+  </div>
+
+  <div class="card hidden" id="resultsCard">
+    <h2>2. Results</h2>
+    <div class="stats" id="stats"></div>
+    <div class="actions">
+      <button class="secondary" id="downloadXlsBtn">Download Excel (.xls)</button>
+      <button id="downloadCsvBtn">Download CSV</button>
+    </div>
+    <div id="downloadLinks" style="margin-top:10px; font-size:12px; color:#555;"></div>
+    <div class="table-scroll">
+      <table id="resultsTable"><thead></thead><tbody></tbody></table>
+    </div>
+  </div>
+</div>
+
+<script>
+let lastRows = [];
+let lastHeaders = ['NPA A/c','App Name','SafeID','PlatformID',
+  'CredentialsManagementPolicy.change.RequirePasswordEveryXDays','PasswordLength','Remarks','Match Status'];
+
+function setStatus(msg, isErr) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = isErr ? 'err' : '';
+}
+
+function readAsText(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsText(file);
+  });
+}
+
+// --- CSV parsing (handles quoted fields with commas/newlines) ---
+function parseCSV(text) {
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else { inQuotes = false; }
+      } else field += c;
+    } else {
+      if (c === '"') inQuotes = true;
+      else if (c === ',') { row.push(field); field = ''; }
+      else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+      else if (c === '\r') { /* skip */ }
+      else field += c;
+    }
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  return rows.filter(r => r.length > 1 || (r.length === 1 && r[0] !== ''));
+}
+
+function csvToObjects(text, skipHashLine) {
+  let lines = text;
+  if (skipHashLine && text.trimStart().startsWith('#')) {
+    const idx = text.indexOf('\n');
+    lines = text.slice(idx + 1);
+  }
+  const rows = parseCSV(lines);
+  const header = rows[0].map(h => h.trim());
+  const out = [];
+  for (let i = 1; i < rows.length; i++) {
+    const obj = {};
+    header.forEach((h, idx) => obj[h] = (rows[i][idx] !== undefined ? rows[i][idx] : ''));
+    out.push(obj);
+  }
+  return { header, rows: out };
+}
+
+function findAccountColumn(header) {
+  const priority = ['name', 'sso', 'user'];
+  for (const p of priority) {
+    const hit = header.find(h => h.trim().toLowerCase() === p);
+    if (hit) return hit;
+  }
+  throw new Error('Could not find an account column named "Name", "SSO", or "User" in the user list file — no other column is used for classification.');
+}
+
+function deriveAppName(filename) {
+  let n = filename.replace(/\.[^/.]+$/, '');
+  n = n.replace(/\(\d+\)/g, '');
+  n = n.replace(/user\s*list/ig, '');
+  n = n.replace(/[_\-]+/g, ' ');
+  n = n.replace(/\s+/g, ' ').trim();
+  return n || filename;
+}
+
+function isSSO(val) {
+  return /^\d{9}$/.test((val || '').trim());
+}
+
+// --- Minimal in-browser .xlsx (ZIP) reader — no external libraries ---
+function readAsArrayBuffer(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsArrayBuffer(file);
+  });
+}
+
+async function inflateBytes(bytes, method) {
+  if (method === 0) return bytes;
+  if (method === 8) {
+    const ds = new DecompressionStream('deflate-raw');
+    const stream = new Blob([bytes]).stream().pipeThrough(ds);
+    const buf = await new Response(stream).arrayBuffer();
+    return new Uint8Array(buf);
+  }
+  throw new Error('Unsupported ZIP compression method: ' + method);
+}
+
+function parseZipCentralDirectory(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let eocdOffset = -1;
+  const searchStart = Math.max(0, bytes.length - 65557);
+  for (let i = bytes.length - 22; i >= searchStart; i--) {
+    if (view.getUint32(i, true) === 0x06054b50) { eocdOffset = i; break; }
+  }
+  if (eocdOffset === -1) throw new Error('Not a valid .xlsx (ZIP) file.');
+  const cdOffset = view.getUint32(eocdOffset + 16, true);
+  const cdEntries = view.getUint16(eocdOffset + 10, true);
+  const entries = {};
+  let off = cdOffset;
+  for (let i = 0; i < cdEntries; i++) {
+    if (view.getUint32(off, true) !== 0x02014b50) throw new Error('Corrupt .xlsx file (bad central directory).');
+    const method = view.getUint16(off + 10, true);
+    const compSize = view.getUint32(off + 20, true);
+    const nameLen = view.getUint16(off + 28, true);
+    const extraLen = view.getUint16(off + 30, true);
+    const commentLen = view.getUint16(off + 32, true);
+    const localHeaderOffset = view.getUint32(off + 42, true);
+    const name = new TextDecoder('utf-8').decode(bytes.slice(off + 46, off + 46 + nameLen));
+    entries[name] = { method, compSize, localHeaderOffset };
+    off += 46 + nameLen + extraLen + commentLen;
+  }
+  return entries;
+}
+
+async function getZipEntry(bytes, entries, name) {
+  const e = entries[name];
+  if (!e) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const lo = e.localHeaderOffset;
+  if (view.getUint32(lo, true) !== 0x04034b50) throw new Error('Corrupt .xlsx file (bad local header) for ' + name);
+  const nameLen = view.getUint16(lo + 26, true);
+  const extraLen = view.getUint16(lo + 28, true);
+  const dataStart = lo + 30 + nameLen + extraLen;
+  const compData = bytes.slice(dataStart, dataStart + e.compSize);
+  return await inflateBytes(compData, e.method);
+}
+
+function colLetterToIndex(letters) {
+  let n = 0;
+  for (const ch of letters) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n - 1;
+}
+
+async function parseXLSXFirstSheet(file) {
+  const buf = new Uint8Array(await readAsArrayBuffer(file));
+  const entries = parseZipCentralDirectory(buf);
+  const dec = new TextDecoder('utf-8');
+
+  const wbBytes = await getZipEntry(buf, entries, 'xl/workbook.xml');
+  if (!wbBytes) throw new Error('"' + file.name + '" does not look like a valid .xlsx workbook.');
+  const wbDoc = new DOMParser().parseFromString(dec.decode(wbBytes), 'text/xml');
+  const sheetEl = wbDoc.getElementsByTagName('sheet')[0];
+  if (!sheetEl) throw new Error('No worksheet found in "' + file.name + '".');
+  const rid = sheetEl.getAttribute('r:id') ||
+    sheetEl.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id');
+
+  const relsBytes = await getZipEntry(buf, entries, 'xl/_rels/workbook.xml.rels');
+  let target = null;
+  if (relsBytes) {
+    const relsDoc = new DOMParser().parseFromString(dec.decode(relsBytes), 'text/xml');
+    const rels = relsDoc.getElementsByTagName('Relationship');
+    for (let i = 0; i < rels.length; i++) {
+      if (rels[i].getAttribute('Id') === rid) { target = rels[i].getAttribute('Target'); break; }
+    }
+  }
+  const sheetPath = target ? 'xl/' + target.replace(/^\/?xl\//, '').replace(/^\.?\//, '') : 'xl/worksheets/sheet1.xml';
+
+  const sheetBytes = await getZipEntry(buf, entries, sheetPath);
+  if (!sheetBytes) throw new Error('Worksheet data missing in "' + file.name + '".');
+  const sheetDoc = new DOMParser().parseFromString(dec.decode(sheetBytes), 'text/xml');
+
+  let sharedStrings = [];
+  const ssBytes = await getZipEntry(buf, entries, 'xl/sharedStrings.xml');
+  if (ssBytes) {
+    const ssDoc = new DOMParser().parseFromString(dec.decode(ssBytes), 'text/xml');
+    const siList = ssDoc.getElementsByTagName('si');
+    for (let i = 0; i < siList.length; i++) {
+      const tNodes = siList[i].getElementsByTagName('t');
+      let text = '';
+      for (let j = 0; j < tNodes.length; j++) text += tNodes[j].textContent;
+      sharedStrings.push(text);
+    }
+  }
+
+  const rowEls = sheetDoc.getElementsByTagName('row');
+  const grid = [];
+  for (let r = 0; r < rowEls.length; r++) {
+    const cellEls = rowEls[r].getElementsByTagName('c');
+    const rowVals = [];
+    for (let c = 0; c < cellEls.length; c++) {
+      const cellEl = cellEls[c];
+      const ref = cellEl.getAttribute('r') || '';
+      const colLetters = (ref.match(/^[A-Z]+/) || [''])[0];
+      const colIdx = colLetters ? colLetterToIndex(colLetters) : rowVals.length;
+      const type = cellEl.getAttribute('t');
+      let val = '';
+      if (type === 's') {
+        const vEl = cellEl.getElementsByTagName('v')[0];
+        val = vEl ? (sharedStrings[parseInt(vEl.textContent, 10)] || '') : '';
+      } else if (type === 'inlineStr') {
+        const tEl = cellEl.getElementsByTagName('t')[0];
+        val = tEl ? tEl.textContent : '';
+      } else {
+        const vEl = cellEl.getElementsByTagName('v')[0];
+        val = vEl ? vEl.textContent : '';
+      }
+      while (rowVals.length < colIdx) rowVals.push('');
+      rowVals.push(val);
+    }
+    grid.push(rowVals);
+  }
+
+  if (!grid.length) throw new Error('"' + file.name + '" has no data rows.');
+  const header = grid[0].map(h => (h || '').trim());
+  const rows = [];
+  for (let i = 1; i < grid.length; i++) {
+    const obj = {};
+    header.forEach((h, idx) => obj[h] = grid[i][idx] !== undefined ? grid[i][idx] : '');
+    rows.push(obj);
+  }
+  return { header, rows };
+}
+
+// --- Inventory XML (SpreadsheetML) parsing ---
+function parseInventoryXML(text) {
+  const doc = new DOMParser().parseFromString(text, 'text/xml');
+  const perr = doc.getElementsByTagName('parsererror');
+  if (perr.length) throw new Error('Inventory file could not be parsed as XML.');
+  let rowEls = doc.getElementsByTagName('ss:Row');
+  if (!rowEls.length) rowEls = doc.getElementsByTagName('Row');
+  let header = null;
+  const lookup = new Map(); // normalized target user -> [{safe, platform}]
+  let idxSafe = -1, idxPlatform = -1, idxTarget = -1;
+
+  for (let r = 0; r < rowEls.length; r++) {
+    const rowEl = rowEls[r];
+    let cellEls = rowEl.getElementsByTagName('ss:Cell');
+    if (!cellEls.length) cellEls = rowEl.getElementsByTagName('Cell');
+    const values = [];
+    for (let c = 0; c < cellEls.length; c++) {
+      let dataEl = cellEls[c].getElementsByTagName('ss:Data')[0] || cellEls[c].getElementsByTagName('Data')[0];
+      values.push(dataEl ? dataEl.textContent : null);
+    }
+    if (header === null) {
+      header = values;
+      idxSafe = header.indexOf('Safe');
+      idxPlatform = header.indexOf('Platform ID');
+      idxTarget = header.indexOf('Target system user name');
+      if (idxTarget === -1) throw new Error('Inventory file is missing a "Target system user name" column.');
+    } else {
+      const target = values[idxTarget];
+      if (target) {
+        const key = target.trim().toLowerCase();
+        const entry = { safe: idxSafe > -1 ? values[idxSafe] : null, platform: idxPlatform > -1 ? values[idxPlatform] : null };
+        if (!lookup.has(key)) lookup.set(key, []);
+        lookup.get(key).push(entry);
+      }
+    }
+  }
+  return lookup;
+}
+
+function escapeXml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+async function run() {
+  const runBtn = document.getElementById('runBtn');
+  runBtn.disabled = true;
+  document.getElementById('resultsCard').classList.add('hidden');
+  try {
+    const userListInput = document.getElementById('userListFiles');
+    const inventoryInput = document.getElementById('inventoryFile');
+    const platformInput = document.getElementById('platformFile');
+
+    if (!userListInput.files.length) throw new Error('Please choose at least one Comprehensive User List file.');
+    if (!inventoryInput.files.length) throw new Error('Please choose the CyberArk Inventory file.');
+    if (!platformInput.files.length) throw new Error('Please choose the Platform Details file.');
+
+    setStatus('Reading files...');
+
+    // 1. User lists -> NPAs
+    let npaList = []; // {account, appName}
+    for (const file of userListInput.files) {
+      let header, rows;
+      if (/\.xlsx$/i.test(file.name)) {
+        ({ header, rows } = await parseXLSXFirstSheet(file));
+      } else {
+        const text = await readAsText(file);
+        ({ header, rows } = csvToObjects(text, false));
+      }
+      const appName = deriveAppName(file.name);
+      const lowerHeaders = header.map(h => h.trim().toLowerCase());
+      const extIdx = lowerHeaders.indexOf('gehc-external');
+      const ldapIdx = lowerHeaders.indexOf('gehc-ldap');
+
+      if (extIdx > -1 && ldapIdx > -1) {
+        // Two-column layout: GEHC-External is the account identifier,
+        // GEHC-LDAP determines classification (9 digits = tied to a real SSO, excluded).
+        const extCol = header[extIdx];
+        const ldapCol = header[ldapIdx];
+        for (const row of rows) {
+          const ext = (row[extCol] || '').trim();
+          const ldap = (row[ldapCol] || '').trim();
+          if (!ext) continue;
+          if (isSSO(ldap)) continue;
+          npaList.push({ account: ext, appName });
+        }
+      } else {
+        // Single-column layout: Name / SSO / User.
+        const acctCol = findAccountColumn(header);
+        for (const row of rows) {
+          const val = (row[acctCol] || '').trim();
+          if (!val) continue;
+          if (!isSSO(val)) npaList.push({ account: val, appName });
+        }
+      }
+    }
+    setStatus(`Found ${npaList.length} NPA(s) across ${userListInput.files.length} user list file(s). Parsing inventory...`);
+
+    // 2. Inventory lookup
+    const invText = await readAsText(inventoryInput.files[0]);
+    const invLookup = parseInventoryXML(invText);
+
+    setStatus('Parsing platform details...');
+
+    // 3. Platform details lookup
+    const platText = await readAsText(platformInput.files[0]);
+    const { rows: platRows } = csvToObjects(platText, true);
+    const platLookup = new Map();
+    for (const p of platRows) {
+      const key = (p['Name'] || '').trim().toLowerCase();
+      platLookup.set(key, {
+        reqDays: p['CredentialsManagementPolicy.change.RequirePasswordEveryXDays'],
+        pwLen: p['PasswordLength']
+      });
+    }
+
+    setStatus('Matching and evaluating...');
+
+    // 4. Build output rows
+    // Matching uses the base ID (text before the first hyphen) so values like
+    // "NP700000577-ASINTEC" match CyberArk's "NP700000577" — a no-op for accounts
+    // that have no hyphen, so the original single-column behavior is unaffected.
+    const outRows = [];
+    for (const npa of npaList) {
+      const key = npa.account.split('-')[0].trim().toLowerCase();
+      const matches = invLookup.get(key) || [];
+      if (!matches.length) {
+        outRows.push({
+          'NPA A/c': npa.account, 'App Name': npa.appName, 'SafeID': '', 'PlatformID': '',
+          'CredentialsManagementPolicy.change.RequirePasswordEveryXDays': '', 'PasswordLength': '',
+          'Match Status': 'Not Found in CyberArk Inventory'
+        });
+        continue;
+      }
+      for (const m of matches) {
+        let reqDays = '', pwLen = '', status = 'Platform ID Not Found in Platform Details';
+        if (m.platform) {
+          const pinfo = platLookup.get(m.platform.trim().toLowerCase());
+          if (pinfo) { reqDays = pinfo.reqDays; pwLen = pinfo.pwLen; status = 'Matched'; }
+        }
+        outRows.push({
+          'NPA A/c': npa.account, 'App Name': npa.appName, 'SafeID': m.safe || '', 'PlatformID': m.platform || '',
+          'CredentialsManagementPolicy.change.RequirePasswordEveryXDays': reqDays, 'PasswordLength': pwLen,
+          'Match Status': status
+        });
+      }
+    }
+
+    // 5. Evaluate compliance
+    for (const r of outRows) {
+      const days = parseFloat(r['CredentialsManagementPolicy.change.RequirePasswordEveryXDays']);
+      const len = parseFloat(r['PasswordLength']);
+      r['Remarks'] = (!isNaN(days) && !isNaN(len) && days <= 365 && len >= 14) ? 'Pass' : 'Fail';
+    }
+
+    lastRows = outRows;
+    renderResults(outRows);
+    setStatus(`Done. ${outRows.length} row(s) produced.`);
+  } catch (e) {
+    setStatus('Error: ' + e.message, true);
+    console.error(e);
+  } finally {
+    runBtn.disabled = false;
+  }
+}
+
+function renderResults(rows) {
+  const card = document.getElementById('resultsCard');
+  card.classList.remove('hidden');
+
+  const passCount = rows.filter(r => r.Remarks === 'Pass').length;
+  const failCount = rows.length - passCount;
+  const notFound = rows.filter(r => r['Match Status'] !== 'Matched').length;
+  const distinctNpas = new Set(rows.map(r => r['NPA A/c'])).size;
+
+  document.getElementById('stats').innerHTML = `
+    <div class="stat"><div class="num">${distinctNpas}</div><div class="lbl">NPAs found</div></div>
+    <div class="stat"><div class="num">${rows.length}</div><div class="lbl">Total rows</div></div>
+    <div class="stat"><div class="num" style="color:#2f855a">${passCount}</div><div class="lbl">Pass</div></div>
+    <div class="stat"><div class="num" style="color:#c53030">${failCount}</div><div class="lbl">Fail</div></div>
+    <div class="stat"><div class="num">${notFound}</div><div class="lbl">Not matched</div></div>
+  `;
+
+  const thead = document.querySelector('#resultsTable thead');
+  const tbody = document.querySelector('#resultsTable tbody');
+  thead.innerHTML = '<tr>' + lastHeaders.map(h => `<th>${h}</th>`).join('') + '</tr>';
+  tbody.innerHTML = rows.map(r => {
+    const cls = r.Remarks === 'Pass' ? 'pass' : 'fail';
+    return '<tr class="' + cls + '">' + lastHeaders.map(h => {
+      const cellCls = h === 'Remarks' ? ' class="remarks"' : '';
+      return `<td${cellCls}>${r[h] !== undefined ? escapeXml(r[h]) : ''}</td>`;
+    }).join('') + '</tr>';
+  }).join('');
+}
+
+function downloadCSV() {
+  try {
+    if (!lastRows.length) { setStatus('Run the compliance check first — no data to download yet.', true); return; }
+    const lines = [lastHeaders.join(',')];
+    for (const r of lastRows) {
+      lines.push(lastHeaders.map(h => {
+        const v = (r[h] !== undefined && r[h] !== null) ? String(r[h]) : '';
+        return '"' + v.replace(/"/g, '""') + '"';
+      }).join(','));
+    }
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    triggerDownload(blob, 'NPA_Password_Compliance_Report.csv');
+  } catch (e) {
+    setStatus('Download failed: ' + e.message, true);
+    console.error(e);
+  }
+}
+
+function downloadXLS() {
+  try {
+    if (!lastRows.length) { setStatus('Run the compliance check first — no data to download yet.', true); return; }
+    buildAndDownloadXLS();
+  } catch (e) {
+    setStatus('Download failed: ' + e.message, true);
+    console.error(e);
+  }
+}
+
+function buildAndDownloadXLS() {
+  const styles = `
+    <Styles>
+      <Style ss:ID="hdr"><Font ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#919AAB" ss:Pattern="Solid"/></Style>
+      <Style ss:ID="pass"><Interior ss:Color="#C6EFCE" ss:Pattern="Solid"/></Style>
+      <Style ss:ID="fail"><Interior ss:Color="#FFC7CE" ss:Pattern="Solid"/></Style>
+      <Style ss:ID="plain"></Style>
+    </Styles>`;
+  let rowsXml = '<Row>' + lastHeaders.map(h => `<Cell ss:StyleID="hdr"><Data ss:Type="String">${escapeXml(h)}</Data></Cell>`).join('') + '</Row>';
+  for (const r of lastRows) {
+    rowsXml += '<Row>' + lastHeaders.map(h => {
+      const v = r[h] !== undefined && r[h] !== null ? r[h] : '';
+      const styleId = h === 'Remarks' ? (r.Remarks === 'Pass' ? ' ss:StyleID="pass"' : ' ss:StyleID="fail"') : '';
+      const isNum = v !== '' && !isNaN(v) && h !== 'NPA A/c' && h !== 'App Name' && h !== 'SafeID' && h !== 'PlatformID';
+      const type = isNum ? 'Number' : 'String';
+      return `<Cell${styleId}><Data ss:Type="${type}">${escapeXml(v)}</Data></Cell>`;
+    }).join('') + '</Row>';
+  }
+  const xml = `<?xml version="1.0"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+${styles}
+  <Worksheet ss:Name="NPA Compliance">
+    <Table>
+${rowsXml}
+    </Table>
+  </Worksheet>
+</Workbook>`;
+  const blob = new Blob([xml], { type: 'application/vnd.ms-excel' });
+  triggerDownload(blob, 'NPA_Password_Compliance_Report.xls');
+}
+
+function triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+
+  // Primary attempt: synthetic click on a temporary anchor.
+  let autoTriggered = true;
+  try {
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  } catch (e) {
+    autoTriggered = false;
+    console.error('Automatic download failed, falling back to manual link.', e);
+  }
+
+  // Always show a real, visible link too — some browsers/security policies allow
+  // a genuine user click but silently block script-triggered downloads.
+  const container = document.getElementById('downloadLinks');
+  const linkId = 'dl-' + filename.replace(/[^a-z0-9]/gi, '');
+  let link = document.getElementById(linkId);
+  if (!link) {
+    link = document.createElement('a');
+    link.id = linkId;
+    link.style.display = 'inline-block';
+    link.style.margin = '4px 10px 4px 0';
+    link.style.color = '#2b6cb0';
+    link.style.textDecoration = 'underline';
+    container.appendChild(link);
+  }
+  link.href = url;
+  link.download = filename;
+  link.textContent = 'If nothing downloaded, click here to save ' + filename;
+  link.target = '_blank';
+  link.rel = 'noopener';
+
+  setStatus((autoTriggered ? 'Download triggered.' : 'Automatic download blocked.') +
+    ' If no file appeared, use the link below the buttons (or right-click it and choose "Save Link As").');
+}
+
+document.getElementById('runBtn').addEventListener('click', run);
+document.getElementById('downloadCsvBtn').addEventListener('click', downloadCSV);
+document.getElementById('downloadXlsBtn').addEventListener('click', downloadXLS);
+</script>
+</body>
+</html>
+"""
+
+    components.html(_npa_html, height=1400, scrolling=True)
+
+
+# ============================================================================
+# SECTION 8B — WFH ACCESS RECONCILIATION TOOL (ported from wfh_recon_portable.py)
+# ============================================================================
+
+def render_wfh_reconciliation_tool():
+    """WFH Access Reconciliation tool: compares a User List against a WFH
+    Report (and optional Offline Approvals) on concatenated ID|Role strings,
+    and produces a downloadable Excel report of any remaining exceptions.
+    Ported in-place from the standalone wfh_recon_portable.py tool.
+    """
+    # ==============================
+    # Helpers
+    # ==============================
+
+    WFH_ID_HINTS = [
+        "user sso","user_sso","user id","userid","user_id","sso","login","username","employee id","emp id","empid"
+    ]
+    WFH_ROLE_HINTS = [
+        "role/entitlement","role entitlement","role","roles","entitlement","entitlements","responsibility",
+        "responsibilities","designation","access","access type","access role","permissions","permission"
+    ]
+
+    def _wfh_normalize_colname(s: str) -> str:
+        return str(s or "").strip().lower().replace("-", " ").replace("_", " ")
+
+    def _wfh_guess_column(columns: List[str], hints: List[str]) -> Optional[str]:
+        norm_cols = [(c, _wfh_normalize_colname(c)) for c in columns]
+        hints_norm = [_wfh_normalize_colname(h) for h in hints]
+        # Scoring: exact contains > startswith > any token match
+        best = None
+        best_score = -1
+        for orig, norm in norm_cols:
+            score = 0
+            for h in hints_norm:
+                if h == norm: score = max(score, 3)
+                if h in norm: score = max(score, 2)
+                if any(tok and tok in norm.split() for tok in h.split()): score = max(score, 1)
+            if score > best_score:
+                best = orig; best_score = score
+        return best if best_score >= 1 else None
+
+    def _wfh_read_any(uploaded_file: st.runtime.uploaded_file_manager.UploadedFile) -> pd.DataFrame:
+        name = uploaded_file.name.lower()
+        if name.endswith(".csv"):
+            return pd.read_csv(uploaded_file)
+        elif name.endswith(".xlsx") or name.endswith(".xls"):
+            return pd.read_excel(uploaded_file)
+        else:
+            # Try CSV as fallback
+            return pd.read_csv(uploaded_file)
+
+    def _wfh_concat_fields(df: pd.DataFrame, id_col: str, role_col: str) -> pd.Series:
+        # Exact match requirement, but clean whitespace
+        a = df[id_col].astype(str).str.strip()
+        b = df[role_col].astype(str).str.strip()
+        return a + " | " + b
+
+    def _wfh_build_mapping_ui(df: pd.DataFrame, title: str, guess_id: Optional[str], guess_role: Optional[str]) -> Tuple[str, str]:
+        st.markdown(f"#### {title}")
+        c1, c2 = st.columns(2)
+        with c1:
+            id_col = st.selectbox("Select **User ID / User SSO** column", options=list(df.columns), index=(list(df.columns).index(guess_id) if guess_id in df.columns else 0), key=f"{title}_id")
+        with c2:
+            role_col = st.selectbox("Select **Role / Entitlement** column", options=list(df.columns), index=(list(df.columns).index(guess_role) if guess_role in df.columns else 0), key=f"{title}_role")
+        st.caption("If auto-detection looks wrong, adjust the dropdowns above.")
+        return id_col, role_col
+
+    def _wfh_to_excel_download(df: pd.DataFrame, filename: str) -> bytes:
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            df.to_excel(writer, index=False, sheet_name="Report")
+            ws = writer.sheets["Report"]
+            for i, col in enumerate(df.columns):
+                try:
+                    max_len = max(df[col].astype(str).map(len).max(), len(col)) + 2
+                except Exception:
+                    max_len = len(col) + 2
+                ws.set_column(i, i, max_len)
+        return output.getvalue()
+
+    def _wfh_kpi(label: str, value: str):
+        st.html(f'''
+        <div class="kpi">
+          <h3>{label}</h3>
+          <p>{value}</p>
+        </div>
+        ''')
+
+    st.caption("Tip: Exact comparison uses **ID | Role** text after trimming spaces.")
+
+    # ==============================
+    # Session State
+    # ==============================
+    for key in [
+        "wfh_user_df","wfh_report_df","wfh_user_id_col","wfh_user_role_col","wfh_report_id_col","wfh_report_role_col",
+        "wfh_missing_df","wfh_missing_after_offline_df"
+    ]:
+        if key not in st.session_state:
+            st.session_state[key] = None
+
+    # ==============================
+    # Tabs = Flow
+    # ==============================
+    tab1, tab2, tab3, tab4 = st.tabs(["① Upload & Map", "② Review Missing", "③ Offline Approvals", "④ Final Report"])
+
+    with tab1:
+        st.markdown("### 📥 Upload files")
+        st.markdown("Upload your **User List** and **WFH Report**. We'll auto-detect columns and let you confirm.")
+
+        colA, colB = st.columns(2)
+        with colA:
+            user_file = st.file_uploader("👤 User List (CSV/XLSX)", type=["csv","xlsx","xls"], key="wfh_user_file")
+            if user_file:
+                try:
+                    st.session_state.wfh_user_df = _wfh_read_any(user_file)
+                    st.success(f"Loaded User List: `{user_file.name}`  • Shape {st.session_state.wfh_user_df.shape}")
+                    st.dataframe(st.session_state.wfh_user_df.head(10), use_container_width=True, hide_index=True)
+                except Exception as e:
+                    st.error(f"Failed to read User List: {e}")
+                    st.stop()
+
+        with colB:
+            wfh_file = st.file_uploader("🏠 WFH Report (CSV/XLSX)", type=["csv","xlsx","xls"], key="wfh_report_file")
+            if wfh_file:
+                try:
+                    st.session_state.wfh_report_df = _wfh_read_any(wfh_file)
+                    st.success(f"Loaded WFH Report: `{wfh_file.name}`  • Shape {st.session_state.wfh_report_df.shape}")
+                    st.dataframe(st.session_state.wfh_report_df.head(10), use_container_width=True, hide_index=True)
+                except Exception as e:
+                    st.error(f"Failed to read WFH Report: {e}")
+                    st.stop()
+
+        st.markdown("---")
+
+        ready = st.session_state.wfh_user_df is not None and st.session_state.wfh_report_df is not None
+        if ready:
+            st.markdown("### 🧭 Map Columns")
+            # WFH mapping (prefer fixed names but allow manual)
+            wfh_guess_id = None
+            wfh_guess_role = None
+            # Prefer exact common names first
+            for c in st.session_state.wfh_report_df.columns:
+                cn = _wfh_normalize_colname(c)
+                if cn in ["user sso","user_sso","user id","userid","user_id","sso"]:
+                    wfh_guess_id = c
+                if cn in ["role/entitlement","role entitlement","role","roles","entitlement","entitlements"]:
+                    wfh_guess_role = c
+            # fallbacks
+            if not wfh_guess_id:
+                wfh_guess_id = _wfh_guess_column(list(st.session_state.wfh_report_df.columns), WFH_ID_HINTS)
+            if not wfh_guess_role:
+                wfh_guess_role = _wfh_guess_column(list(st.session_state.wfh_report_df.columns), WFH_ROLE_HINTS)
+
+            st.session_state.wfh_report_id_col, st.session_state.wfh_report_role_col = _wfh_build_mapping_ui(
+                st.session_state.wfh_report_df, "WFH Report", wfh_guess_id or list(st.session_state.wfh_report_df.columns)[0],
+                wfh_guess_role or list(st.session_state.wfh_report_df.columns)[0]
+            )
+
+            # User List mapping (dynamic naming)
+            user_guess_id = _wfh_guess_column(list(st.session_state.wfh_user_df.columns), WFH_ID_HINTS) or list(st.session_state.wfh_user_df.columns)[0]
+            user_guess_role = _wfh_guess_column(list(st.session_state.wfh_user_df.columns), WFH_ROLE_HINTS) or list(st.session_state.wfh_user_df.columns)[0]
+
+            st.session_state.wfh_user_id_col, st.session_state.wfh_user_role_col = _wfh_build_mapping_ui(
+                st.session_state.wfh_user_df, "User List", user_guess_id, user_guess_role
+            )
+
+            st.markdown("#### 🔗 Concatenation format")
+            st.caption("We compare strings as: **`<UserID> | <Role>`** (exact after trimming spaces).")
+
+            if st.button("▶️ Run Comparison", type="primary"):
+                try:
+                    wfh_concat = _wfh_concat_fields(st.session_state.wfh_report_df, st.session_state.wfh_report_id_col, st.session_state.wfh_report_role_col)
+                    user_concat = _wfh_concat_fields(st.session_state.wfh_user_df, st.session_state.wfh_user_id_col, st.session_state.wfh_user_role_col)
+                    wfh_set = set(wfh_concat.tolist())
+
+                    missing_mask = ~user_concat.isin(wfh_set)
+                    missing_df = st.session_state.wfh_user_df.loc[missing_mask].copy()
+                    missing_df["__Concat(ID|Role)"] = user_concat[missing_mask].values
+
+                    st.session_state.wfh_missing_df = missing_df
+
+                    c1, c2, c3 = st.columns(3)
+                    with c1: _wfh_kpi("Rows in User List", f"{len(st.session_state.wfh_user_df):,}")
+                    with c2: _wfh_kpi("Rows in WFH Report", f"{len(st.session_state.wfh_report_df):,}")
+                    with c3: _wfh_kpi("Missing after WFH match", f"{len(missing_df):,}")
+
+                    if len(missing_df) == 0:
+                        st.success("🎉 All users found in WFH Report! Move to **Final Report** tab.")
+                        st.balloons()
+                    else:
+                        st.warning("Some users not found in WFH. Go to **Review Missing** → then **Offline Approvals** if needed.")
+                        st.toast("Missing rows computed.", icon="✅")
+                except KeyError as e:
+                    st.error(f"Selected column not found: {e}")
+
+    with tab2:
+        st.markdown("### 🔎 Review Missing from WFH")
+        if st.session_state.wfh_missing_df is None:
+            st.info("Run comparison in **Upload & Map** first.")
+        else:
+            df = st.session_state.wfh_missing_df
+            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.download_button(
+                "⬇️ Download 'Missing from WFH' (Excel)",
+                data=_wfh_to_excel_download(df, "Missing_from_WFH.xlsx"),
+                file_name=f"Missing_from_WFH_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+            st.caption("This is the list of **User List** rows whose **ID | Role** pairs were not found in the WFH report.")
+
+    with tab3:
+        st.markdown("### 📝 Offline Approval Recheck")
+        if st.session_state.wfh_missing_df is None:
+            st.info("Nothing to recheck yet. Run the comparison first.")
+        else:
+            off = st.file_uploader("📄 Upload Offline Approval (CSV/XLSX)", type=["csv","xlsx","xls"], key="wfh_offline_file")
+            if off:
+                try:
+                    off_df = _wfh_read_any(off)
+                    st.success(f"Loaded Offline Approval: `{off.name}` • Shape {off_df.shape}")
+                    st.dataframe(off_df.head(10), use_container_width=True, hide_index=True)
+
+                    off_guess_id = _wfh_guess_column(list(off_df.columns), WFH_ID_HINTS) or list(off_df.columns)[0]
+                    off_guess_role = _wfh_guess_column(list(off_df.columns), WFH_ROLE_HINTS) or list(off_df.columns)[0]
+
+                    off_id_col, off_role_col = _wfh_build_mapping_ui(off_df, "Offline Approval", off_guess_id, off_guess_role)
+
+                    if st.button("🔁 Recheck Missing against Offline Approvals"):
+                        off_concat = _wfh_concat_fields(off_df, off_id_col, off_role_col)
+                        off_set = set(off_concat.tolist())
+
+                        still_missing_mask = ~st.session_state.wfh_missing_df["__Concat(ID|Role)"].isin(off_set)
+                        still_missing_df = st.session_state.wfh_missing_df.loc[still_missing_mask].drop(columns=["__Concat(ID|Role)"]).copy()
+
+                        st.session_state.wfh_missing_after_offline_df = still_missing_df
+
+                        c1, c2 = st.columns(2)
+                        with c1: _wfh_kpi("Missing before recheck", f"{len(st.session_state.wfh_missing_df):,}")
+                        with c2: _wfh_kpi("Still missing after Offline", f"{len(still_missing_df):,}")
+
+                        if len(still_missing_df) == 0:
+                            st.success("✅ All users accounted for across WFH Report + Offline Approvals.")
+                            st.balloons()
+                        else:
+                            st.warning("Some users are still not found even after checking Offline Approvals.")
+                            st.dataframe(still_missing_df, use_container_width=True, hide_index=True)
+
+                            st.download_button(
+                                "⬇️ Download 'Still Missing' (Excel)",
+                                data=_wfh_to_excel_download(still_missing_df, "Still_Missing.xlsx"),
+                                file_name=f"Still_Missing_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            )
+                except Exception as e:
+                    st.error(f"Failed to process Offline Approval: {e}")
+
+    with tab4:
+        st.markdown("### 📦 Final Report")
+        if st.session_state.wfh_missing_df is None:
+            st.info("Run comparison in **Upload & Map** first.")
+        else:
+            final_df = st.session_state.wfh_missing_after_offline_df
+            if final_df is None:
+                # If offline not used, final = missing_df
+                final_df = st.session_state.wfh_missing_df.drop(columns=["__Concat(ID|Role)"], errors="ignore").copy()
+
+            if len(final_df) == 0:
+                st.success("🎉 All users found. No exceptions remain.")
+                st.balloons()
+            else:
+                st.warning(f"{len(final_df):,} exceptions remain. Download the final exceptions report.")
+                st.dataframe(final_df, use_container_width=True, hide_index=True)
+                st.download_button(
+                    "⬇️ Download Final Exceptions (Excel)",
+                    data=_wfh_to_excel_download(final_df, "Final_Exceptions.xlsx"),
+                    file_name=f"Final_Exceptions_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+
+
+
+# ============================================================================
+# SECTION 8C — JCT ACCESS RECONCILIATION TOOL (ported from jct3_codex.py)
+# ============================================================================
+
+def render_jct_reconciliation_tool():
+    """JCT Access Reconciliation tool — embedded VERBATIM from the standalone
+    jct3_codex.py script (same variable names, same session-state keys, same
+    widget keys, same matplotlib charts, same 'kpi' HTML cards, same sidebar
+    steps, same inject_css() theme/banner — nothing renamed, nothing removed).
+
+    The ONLY line intentionally disabled is st.set_page_config(...) below,
+    because Streamlit does not allow calling set_page_config() more than once
+    per app, and this host portal already calls it once at module scope.
+    Every other line is identical to jct3_codex.py.
+    """
+    import io, zipfile
+    from datetime import datetime
+    from typing import Optional, Tuple, List
+
+    import pandas as pd
+    import streamlit as st
+    import matplotlib.pyplot as plt
+
+    # ==============================
+    # App Config & Theme
+    # ==============================
+    # st.set_page_config(
+    #     page_title="Access Reconciliation Suite",
+    #     page_icon="🧭",
+    #     layout="wide",
+    #     initial_sidebar_state="expanded",
+    # )
+
+    # Toggle-free theme choice (no slider)
+    DARK_MODE = False  # set to True if you want to force dark mode without a UI toggle
+
+    # ==============================
+    # UI: Banner + CSS (light/dark)
+    # ==============================
+    def inject_css(dark: bool):
+        if dark:
+            css = """
+            <style>
+            :root{
+              --brand1:#22d3ee;  /* cyan-400 */
+              --brand2:#0ea5e9;  /* sky-500 */
+              --ink:#e5e7eb;     /* slate-200 */
+              --muted:#94a3b8;   /* slate-400 */
+              --panel:#0b1220;   /* app background */
+              --card:#0f172a;    /* cards/main blocks */
+              --sidebar:#2A1440; /* SIDEBAR background (portal purple, was #0a0f1a) */
+              --border:rgba(148,163,184,.22);
+              --dz:#0b1324;      /* dropzone bg */
+              --dz-brd:rgba(148,163,184,.35);
+            }
+            .block-container{padding-top:1rem;background:var(--panel)!important;color:var(--ink)!important;}
+            .stMarkdown,.stText,.stCaption,.st-emotion-cache,p,h1,h2,h3,h4,h5,h6,label{color:var(--ink)!important;}
+            .gradient-banner{
+              padding:18px 22px;border-radius:16px;margin-bottom:14px;
+              background:linear-gradient(135deg,#0b1020,var(--brand2));
+              color:white;box-shadow:0 10px 32px rgba(2,6,23,.35);
+              animation: floatIn .5s ease-in-out;
+            }
+            @keyframes floatIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+            .kpi{
+              border-radius:16px;padding:14px 16px;background:var(--card);
+              box-shadow:0 6px 22px rgba(2,6,23,.6);border:1px solid var(--border);
+              transition: transform .15s ease;
+            }
+            .kpi:hover{transform: translateY(-2px)}
+            .kpi h3{margin:0;font-weight:800;font-size:.95rem;color:var(--ink);letter-spacing:.01em}
+            .kpi p{margin:.25rem 0 0 0;font-size:1.25rem;font-weight:900;color:#fff}
+            .card{
+              border-radius:16px;padding:16px;background:var(--card);
+              box-shadow:0 12px 34px rgba(2,6,23,.55);border:1px solid var(--border);
+            }
+            hr{border:none;height:1px;background:var(--border);margin:18px 0}
+            .hint{font-size:.9rem;color:var(--muted)}
+            .badge{display:inline-block;padding:2px 8px;border-radius:999px;background:#111827;color:#e5e7eb;font-size:.8rem;margin-right:6px;border:1px solid var(--border);}
+            [data-testid="stSidebar"]{background:var(--sidebar)!important;border-right:1px solid var(--border);}
+            [data-testid="stSidebar"] *{color:var(--ink)!important;}
+            [data-testid="stSidebar"] hr{background:var(--border)!important;}
+            [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+            [data-testid="stSidebar"] .stCaption{color:var(--muted)!important;}
+            [data-testid="stSidebar"] .badge{background:#0f172a;color:var(--ink);border:1px solid var(--border);}
+            [data-testid="stSidebar"] ::-webkit-scrollbar{width:8px;height:8px}
+            [data-testid="stSidebar"] ::-webkit-scrollbar-thumb{background:#1f2937;border-radius:8px}
+            [data-testid="stFileUploaderDropzone"]{background:var(--dz)!important;border:1px dashed var(--dz-brd)!important;}
+            [data-testid="stFileUploaderDropzone"] *{color:var(--ink)!important;}
+            .pulse{animation:pulse 1.2s ease-in-out infinite}
+            @keyframes pulse{0%{opacity:.7}50%{opacity:1}100%{opacity:.7}}
+            </style>
+            """
+        else:
+            css = """
+            <style>
+            :root{
+              --brand1:#0ea5e9; /* sky-500 */
+              --brand2:#1e40af; /* indigo-900 */
+              --ink:#0f172a;    /* slate-900 */
+              --muted:#334155;  /* slate-600 */
+              --panel:#ffffff;
+              --card:#ffffff;
+              --sidebar:#3B1D57; /* portal purple, was #ffffff */
+              --border:rgba(30,41,59,.06);
+            }
+            *{scrollbar-width:thin}
+            .block-container{padding-top:1rem;background:var(--panel)!important;}
+            .gradient-banner{
+              padding:18px 22px;border-radius:16px;margin-bottom:14px;
+              background:linear-gradient(135deg,var(--brand2),var(--brand1));
+              color:white;box-shadow:0 10px 32px rgba(2,6,23,.18);
+              animation: floatIn .5s ease-in-out;
+            }
+            @keyframes floatIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+            .kpi{
+              border-radius:16px;padding:14px 16px;background:#fff;
+              box-shadow:0 6px 22px rgba(2,6,23,.06);border:1px solid var(--border);
+              transition: transform .15s ease;
+            }
+            .kpi:hover{transform: translateY(-2px)}
+            .kpi h3{margin:0;font-weight:800;font-size:.95rem;color:var(--ink);letter-spacing:.01em}
+            .kpi p{margin:.25rem 0 0 0;font-size:1.25rem;font-weight:900;color:#111827}
+            .badge{display:inline-block;padding:2px 8px;border-radius:999px;background:#e2e8f0;color:#0f172a;font-size:.8rem;margin-right:6px}
+            .card{border-radius:16px;padding:16px;background:#fff;box-shadow:0 12px 34px rgba(2,6,23,.06);border:1px solid var(--border);}
+            .hint{font-size:.9rem;color:var(--muted)}
+            hr{border:none;height:1px;background:#e2e8f0;margin:18px 0}
+            [data-testid="stSidebar"]{background:var(--sidebar)!important;border-right:1px solid var(--border);}
+            </style>
+            """
+        st.html(css)
+        st.html(f"""
+        <div class="gradient-banner">
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div style="font-size:28px">🧭</div>
+            <div>
+              <div style="opacity:.9;letter-spacing:.06em;font-size:.8rem;">STREAMLIT SUITE</div>
+              <div style="font-size:1.15rem;font-weight:800;">Access Reconciliation Suite</div>
+              <div style="opacity:.9">Compare JCT vs User List (SSO), and User List vs WFH (SSO | Role). Export exceptions instantly.</div>
+            </div>
+          </div>
+        </div>
+        """)
+
+    inject_css(DARK_MODE)
+
+    # ==============================
+    # Helpers
+    # ==============================
+    SSO_HINTS = [
+        "user sso","user_sso","sso","login","username","user id","user_id","userid","employee id","emp id","empid"
+    ]
+    ROLE_HINTS = [
+        "role/entitlement","role entitlement","role","roles","entitlement","entitlements",
+        "responsibility","responsibilities","designation","access","access type","access role","permissions","permission",
+        "job","jobs","title","user.title","position"
+    ]
+
+    def normalize_colname(s: str) -> str:
+        return str(s or "").strip().lower().replace("-", " ").replace("_", " ")
+
+    def guess_column(columns: List[str], hints: List[str]) -> Optional[str]:
+        norm_cols = [(c, normalize_colname(c)) for c in columns]
+        hints_norm = [normalize_colname(h) for h in hints]
+        best = None
+        best_score = -1
+        for orig, norm in norm_cols:
+            score = 0
+            for h in hints_norm:
+                if h == norm: score = max(score, 3)
+                if h in norm: score = max(score, 2)
+                if any(tok and tok in norm.split() for tok in h.split()): score = max(score, 1)
+            if score > best_score:
+                best, best_score = orig, score
+        return best if best_score >= 1 else None
+
+    def read_any(uploaded_file: st.runtime.uploaded_file_manager.UploadedFile) -> pd.DataFrame:
+        name = uploaded_file.name.lower()
+        if name.endswith(".csv"):
+            return pd.read_csv(uploaded_file)
+        elif name.endswith(".xlsx") or name.endswith(".xls"):
+            return pd.read_excel(uploaded_file)
+        else:
+            return pd.read_csv(uploaded_file)
+
+    def concat_fields(df: pd.DataFrame, sso_col: str, role_col: str) -> pd.Series:
+        a = df[sso_col].astype(str).str.strip()
+        b = df[role_col].astype(str).str.strip()
+        return a + " | " + b
+
+    def to_excel_download(df: pd.DataFrame, sheet_name: str = "Report") -> bytes:
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            df.to_excel(writer, index=False, sheet_name=sheet_name)
+            ws = writer.sheets[sheet_name]
+            for i, col in enumerate(df.columns):
+                try:
+                    max_len = max(df[col].astype(str).map(len).max(), len(col)) + 2
+                except Exception:
+                    max_len = len(col) + 2
+                ws.set_column(i, i, max_len)
+        return output.getvalue()
+
+    def kpi(label: str, value: str):
+        st.html(f"""
+        <div class="kpi">
+          <h3>{label}</h3>
+          <p>{value}</p>
+        </div>
+        """)
+
+    def build_mapping_ui(df: pd.DataFrame, title: str, default_sso: Optional[str] = None, default_role: Optional[str] = None,
+                         want_role: bool = False, key_prefix: str = "") -> Tuple[str, Optional[str]]:
+        st.markdown(f"#### {title}")
+        cols = st.columns(2 if want_role else 1)
+        with cols[0]:
+            sso_col = st.selectbox(
+                "Select **SSO / User ID** column",
+                options=list(df.columns),
+                index=(list(df.columns).index(default_sso) if default_sso in df.columns else 0),
+                key=f"{key_prefix}_{title}_sso"
+            )
+        role_col = None
+        if want_role:
+            with cols[1]:
+                role_col = st.selectbox(
+                    "Select **Role / Entitlement** column",
+                    options=list(df.columns),
+                    index=(list(df.columns).index(default_role) if default_role in df.columns else 0),
+                    key=f"{key_prefix}_{title}_role"
+                )
+        st.caption("Tip: Auto-detected columns can be adjusted from the dropdowns.")
+        return sso_col, role_col
+
+    def plot_bar(labels: List[str], values: List[int], title: str):
+        fig, ax = plt.subplots()
+        ax.bar(labels, values)
+        ax.set_title(title)
+        ax.set_ylabel("Count")
+        for i, v in enumerate(values):
+            ax.text(i, v, str(v), ha="center", va="bottom")
+        st.pyplot(fig)
+
+    # ==============================
+    # Session State
+    # ==============================
+    ss_defaults = {
+        "jct_df": None, "user_df_p1": None,
+        "jct_sso_col": None, "user_sso_col_p1": None, "user_role_col_p1": None,
+        "jct_missing_df": None, "p1_found_df": None,
+        "user_df_p2": None, "wfh_df": None,
+        "user_sso_col_p2": None, "user_role_col_p2": None,
+        "wfh_sso_col": None, "wfh_role_col": None,
+        "p2_missing_df": None,
+        "p1_counts": None, "p2_counts": None
+    }
+    for k, v in ss_defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+    # ==============================
+    # Tabs / Pages
+    # ==============================
+    tab1, tab2, tab3 = st.tabs([
+        "① JCT vs User List (SSO)",
+        "② User List vs WFH (SSO | Role)",
+        "③ Exceptions Report (Step 2)"
+    ])
+
+    # ========== TAB 1: JCT vs User List (SSO exist?) ==========
+    with tab1:
+        st.markdown("### 🧪 Page 1: JCT SSO presence in User List")
+        st.markdown("Upload **JCT Report** and **User List**. We’ll auto-map the **SSO** columns and tell you which JCT SSO values are **not present** in the User List. We also let you download the **Found with Roles** report (roles from the User List).")
+
+        colA, colB = st.columns(2)
+        with colA:
+            jct_file = st.file_uploader("📄 JCT Report (CSV/XLSX)", type=["csv", "xlsx", "xls"], key="p1_jct")
+            if jct_file:
+                try:
+                    st.session_state.jct_df = read_any(jct_file)
+                    st.success(f"Loaded JCT Report: `{jct_file.name}` • Shape {st.session_state.jct_df.shape}")
+                    st.dataframe(st.session_state.jct_df.head(10), use_container_width=True, hide_index=True)
+                except Exception as e:
+                    st.error(f"Failed to read JCT Report: {e}")
+                    st.stop()
+        with colB:
+            user_file_p1 = st.file_uploader("👤 User List (CSV/XLSX)", type=["csv", "xlsx", "xls"], key="p1_user")
+            if user_file_p1:
+                try:
+                    st.session_state.user_df_p1 = read_any(user_file_p1)
+                    st.success(f"Loaded User List: `{user_file_p1.name}` • Shape {st.session_state.user_df_p1.shape}")
+                    st.dataframe(st.session_state.user_df_p1.head(10), use_container_width=True, hide_index=True)
+                except Exception as e:
+                    st.error(f"Failed to read User List: {e}")
+                    st.stop()
+
+        st.markdown("---")
+
+        ready_p1 = st.session_state.jct_df is not None and st.session_state.user_df_p1 is not None
+        if ready_p1:
+            jct_guess_sso = guess_column(list(st.session_state.jct_df.columns), SSO_HINTS) or list(st.session_state.jct_df.columns)[0]
+            user_guess_sso_p1 = guess_column(list(st.session_state.user_df_p1.columns), SSO_HINTS) or list(st.session_state.user_df_p1.columns)[0]
+            user_guess_role_p1 = guess_column(list(st.session_state.user_df_p1.columns), ROLE_HINTS) or list(st.session_state.user_df_p1.columns)[0]
+
+            # JCT: SSO only
+            jct_sso_col, _ = build_mapping_ui(
+                st.session_state.jct_df, "JCT Report Mapping",
+                default_sso=jct_guess_sso, want_role=False, key_prefix="p1"
+            )
+            # USER LIST: SSO + ROLE (new)
+            st.session_state.user_sso_col_p1, st.session_state.user_role_col_p1 = build_mapping_ui(
+                st.session_state.user_df_p1, "User List Mapping (SSO + Role for 'Found with Roles' report)",
+                default_sso=user_guess_sso_p1, default_role=user_guess_role_p1,
+                want_role=True, key_prefix="p1_user"
+            )
+
+            if st.button("▶️ Compare JCT SSO in User List", type="primary", key="p1_compare"):
+                try:
+                    # Normalize
+                    jct_sso = st.session_state.jct_df[jct_sso_col].astype(str).str.strip()
+                    user_sso_norm = st.session_state.user_df_p1[st.session_state.user_sso_col_p1].astype(str).str.strip()
+                    user_role_norm = st.session_state.user_df_p1[st.session_state.user_role_col_p1].astype(str).str.strip()
+
+                    # Build user lookup frame (SSO, Role)
+                    user_lookup = pd.DataFrame({"SSO": user_sso_norm, "Role": user_role_norm})
+
+                    user_ssos = set(user_lookup["SSO"].tolist())
+
+                    # Missing list (same as before)
+                    not_found_mask = ~jct_sso.isin(user_ssos)
+                    missing_df = st.session_state.jct_df.loc[not_found_mask].copy()
+                    missing_df["__SSO_Selected"] = jct_sso[not_found_mask].values
+                    st.session_state.jct_missing_df = missing_df
+
+                    # NEW: Found-with-roles report (restrict to SSOs present in both; roles taken from user list)
+                    found_ssos = set(jct_sso[~not_found_mask].tolist())
+                    found_with_roles = user_lookup[user_lookup["SSO"].isin(found_ssos)].copy()
+                    # Optional: drop duplicates (SSO + Role) if needed
+                    found_with_roles = found_with_roles.drop_duplicates().reset_index(drop=True)
+                    st.session_state.p1_found_df = found_with_roles
+
+                    # KPIs
+                    total_jct = len(st.session_state.jct_df)
+                    found = int((~not_found_mask).sum())
+                    not_found = int(not_found_mask.sum())
+                    st.session_state.p1_counts = {"Found": found, "Not Found": not_found}
+                except KeyError as e:
+                    st.error(f"Selected column not found: {e}")
+
+            # --------------------------------------------------------------
+            # Persistent results display (kept OUTSIDE the Compare button so
+            # the tables + download buttons remain visible/clickable across
+            # Streamlit reruns instead of disappearing after one click).
+            # --------------------------------------------------------------
+            if st.session_state.p1_counts is not None:
+                total_jct = len(st.session_state.jct_df)
+                found = st.session_state.p1_counts.get("Found", 0)
+                not_found = st.session_state.p1_counts.get("Not Found", 0)
+
+                c1, c2, c3 = st.columns(3)
+                with c1: kpi("Rows in JCT", f"{total_jct:,}")
+                with c2: kpi("Rows in User List", f"{len(st.session_state.user_df_p1):,}")
+                with c3: kpi("JCT SSO not in User List", f"{not_found:,}")
+
+                st.markdown("#### 📊 Summary (JCT vs User List)")
+                plot_bar(["Found", "Not Found"], [found, not_found], "JCT SSO presence in User List")
+
+                # Downloads — Not Found
+                if not_found == 0:
+                    st.success("🎉 All JCT SSO values exist in User List.")
+                    st.balloons()
+                else:
+                    st.warning("Some JCT SSO values were **not found** in the User List.")
+                    st.dataframe(st.session_state.jct_missing_df, use_container_width=True, hide_index=True)
+                    st.download_button(
+                        "⬇️ Download 'JCT SSO Not Found' (Excel)",
+                        data=to_excel_download(st.session_state.jct_missing_df, "JCT_SSO_Not_Found"),
+                        file_name=f"JCT_SSO_Not_Found_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="p1_dl_missing",
+                    )
+                    st.toast("JCT vs User List comparison complete.", icon="✅")
+
+                # Downloads — Found with Roles (Test 1 "found user list")
+                if found > 0 and st.session_state.p1_found_df is not None and len(st.session_state.p1_found_df) > 0:
+                    st.markdown("#### ✅ Found in Both (with Roles from User List)")
+                    st.dataframe(st.session_state.p1_found_df, use_container_width=True, hide_index=True)
+                    st.download_button(
+                        "⬇️ Download 'JCT SSO Found with Roles' (Excel)",
+                        data=to_excel_download(st.session_state.p1_found_df, "JCT_SSO_Found_with_Roles"),
+                        file_name=f"JCT_SSO_Found_with_Roles_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="p1_dl_found",
+                    )
+
+
+    # ========== TAB 2: User List vs WFH (SSO | Role) ==========
+    with tab2:
+        st.markdown("### 🔗 Page 2: User List vs WFH (Exact `SSO | Role`)")
+        st.markdown("Upload **User List** and **WFH Report**. We’ll auto-map **SSO** and **Role/Entitlement** for each file (editable) and compare exact pairs.")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            user_file_p2 = st.file_uploader("👤 User List (CSV/XLSX)", type=["csv", "xlsx", "xls"], key="p2_user")
+            if user_file_p2:
+                try:
+                    st.session_state.user_df_p2 = read_any(user_file_p2)
+                    st.success(f"Loaded User List: `{user_file_p2.name}` • Shape {st.session_state.user_df_p2.shape}")
+                    st.dataframe(st.session_state.user_df_p2.head(10), use_container_width=True, hide_index=True)
+                except Exception as e:
+                    st.error(f"Failed to read User List: {e}")
+                    st.stop()
+        with col2:
+            wfh_file = st.file_uploader("🏠 WFH Report (CSV/XLSX)", type=["csv", "xlsx", "xls"], key="p2_wfh")
+            if wfh_file:
+                try:
+                    st.session_state.wfh_df = read_any(wfh_file)
+                    st.success(f"Loaded WFH Report: `{wfh_file.name}` • Shape {st.session_state.wfh_df.shape}")
+                    st.dataframe(st.session_state.wfh_df.head(10), use_container_width=True, hide_index=True)
+                except Exception as e:
+                    st.error(f"Failed to read WFH Report: {e}")
+                    st.stop()
+
+        st.markdown("---")
+
+        ready_p2 = st.session_state.user_df_p2 is not None and st.session_state.wfh_df is not None
+        if ready_p2:
+            user_guess_sso_p2 = guess_column(list(st.session_state.user_df_p2.columns), SSO_HINTS) or list(st.session_state.user_df_p2.columns)[0]
+            user_guess_role_p2 = guess_column(list(st.session_state.user_df_p2.columns), ROLE_HINTS) or list(st.session_state.user_df_p2.columns)[0]
+
+            wfh_guess_sso = None
+            wfh_guess_role = None
+            for c in st.session_state.wfh_df.columns:
+                cn = normalize_colname(c)
+                if cn in ["user sso","user_sso","sso","user id","userid","user_id","login","username"]:
+                    wfh_guess_sso = c
+                if cn in ["role/entitlement","role entitlement","role","roles","entitlement","entitlements"]:
+                    wfh_guess_role = c
+            if not wfh_guess_sso:
+                wfh_guess_sso = guess_column(list(st.session_state.wfh_df.columns), SSO_HINTS) or list(st.session_state.wfh_df.columns)[0]
+            if not wfh_guess_role:
+                wfh_guess_role = guess_column(list(st.session_state.wfh_df.columns), ROLE_HINTS) or list(st.session_state.wfh_df.columns)[0]
+
+            st.session_state.user_sso_col_p2, st.session_state.user_role_col_p2 = build_mapping_ui(
+                st.session_state.user_df_p2, "User List Mapping", default_sso=user_guess_sso_p2, default_role=user_guess_role_p2,
+                want_role=True, key_prefix="p2_user"
+            )
+            st.session_state.wfh_sso_col, st.session_state.wfh_role_col = build_mapping_ui(
+                st.session_state.wfh_df, "WFH Report Mapping", default_sso=wfh_guess_sso, default_role=wfh_guess_role,
+                want_role=True, key_prefix="p2_wfh"
+            )
+
+            if st.button("▶️ Compare `SSO | Role`", type="primary", key="p2_compare"):
+                try:
+                    user_concat = concat_fields(st.session_state.user_df_p2, st.session_state.user_sso_col_p2, st.session_state.user_role_col_p2)
+                    wfh_concat = concat_fields(st.session_state.wfh_df, st.session_state.wfh_sso_col, st.session_state.wfh_role_col)
+
+                    wfh_set = set(wfh_concat.tolist())
+                    missing_mask = ~user_concat.isin(wfh_set)
+                    missing_df = st.session_state.user_df_p2.loc[missing_mask].copy()
+                    missing_df["__Concat(SSO|Role)"] = user_concat[missing_mask].values
+
+                    st.session_state.p2_missing_df = missing_df
+
+                    total_user = len(st.session_state.user_df_p2)
+                    matched = int((~missing_mask).sum())
+                    missing = int(missing_mask.sum())
+                    st.session_state.p2_counts = {"Matched": matched, "Missing": missing}
+
+                    c1, c2, c3 = st.columns(3)
+                    with c1: kpi("Rows in User List", f"{total_user:,}")
+                    with c2: kpi("Rows in WFH Report", f"{len(st.session_state.wfh_df):,}")
+                    with c3: kpi("Missing after concat match", f"{missing:,}")
+
+                    st.markdown("#### 📊 Summary (User List vs WFH)")
+                    plot_bar(["Matched", "Missing"], [matched, missing], "`SSO | Role` match results")
+
+                    if missing == 0:
+                        st.success("🎉 All `SSO | Role` pairs from User List are present in WFH Report.")
+                        st.balloons()
+                    else:
+                        st.warning("Some `SSO | Role` pairs from User List were **not found** in WFH Report.")
+                        st.dataframe(missing_df, use_container_width=True, hide_index=True)
+                        st.toast("User List vs WFH comparison complete.", icon="✅")
+                except KeyError as e:
+                    st.error(f"Selected column not found: {e}")
+
+    # ========== TAB 3: Exceptions Report (from Step 2) ==========
+    with tab3:
+        st.markdown("### 📦 Page 3: Exceptions & Exports")
+        if st.session_state.p2_missing_df is None and st.session_state.jct_missing_df is None:
+            st.info("Run **Page 1** and/or **Page 2** comparisons to populate reports.")
+        else:
+            if st.session_state.p2_missing_df is not None:
+                final_df = st.session_state.p2_missing_df.drop(columns=["__Concat(SSO|Role)"], errors="ignore").copy()
+                if len(final_df) == 0:
+                    st.success("🎉 No exceptions remain from Step 2.")
+                    st.balloons()
+                else:
+                    st.warning(f"{len(final_df):,} exceptions remain from Step 2. Download the report below.")
+                    st.dataframe(final_df, use_container_width=True, hide_index=True)
+                    st.download_button(
+                        "⬇️ Download Exceptions (Excel)",
+                        data=to_excel_download(final_df, "Exceptions_Step2"),
+                        file_name=f"Exceptions_Step2_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+            else:
+                st.info("No Step 2 exceptions yet.")
+
+            st.markdown("---")
+            st.markdown("#### 📦 One-click Export: All Available Reports (ZIP)")
+            files = []
+            if st.session_state.jct_missing_df is not None and len(st.session_state.jct_missing_df) > 0:
+                p1_bytes = to_excel_download(st.session_state.jct_missing_df, "JCT_SSO_Not_Found")
+                files.append(("JCT_SSO_Not_Found.xlsx", p1_bytes))
+            if st.session_state.p2_missing_df is not None:
+                p2_final = st.session_state.p2_missing_df.drop(columns=["__Concat(SSO|Role)"], errors="ignore").copy()
+                p2_bytes = to_excel_download(p2_final, "Exceptions_Step2")
+                files.append(("Exceptions_Step2.xlsx", p2_bytes))
+
+            if len(files) == 0:
+                st.info("No reports to include in ZIP yet. Generate results in Page 1 / Page 2.")
+            else:
+                zip_buf = io.BytesIO()
+                with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for fname, fbytes in files:
+                        zf.writestr(fname, fbytes)
+                zip_buf.seek(0)
+                st.download_button(
+                    "⬇️ Export All Reports (ZIP)",
+                    data=zip_buf.getvalue(),
+                    file_name=f"Access_Recon_Reports_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+                    mime="application/zip",
+                )
+
+# ============================================================================
 # SECTION 9 — MAIN APP
 # ============================================================================
-st.set_page_config(page_title="Tech Assisted Audit Tools", page_icon="🔐", layout="wide")
+st.set_page_config(page_title="SPRINT", page_icon="🔐", layout="wide")
 inject_global_css()
 
 if "authenticated" not in st.session_state: st.session_state.authenticated = False
@@ -3820,21 +5808,24 @@ if "current_user" not in st.session_state: st.session_state.current_user = None
 if "login_error" not in st.session_state: st.session_state.login_error = ""
 if "active_tool" not in st.session_state: st.session_state.active_tool = None
 if "portal_view" not in st.session_state: st.session_state.portal_view = "dashboard"
+if "must_change_password" not in st.session_state: st.session_state.must_change_password = False
 
 
 def _logout():
-    for key in ["authenticated", "current_user", "login_error", "active_tool", "portal_view", "plain_password", "register_error", "register_success"]:
+    for key in ["authenticated", "current_user", "login_error", "active_tool", "portal_view", "plain_password", "register_error", "register_success", "must_change_password"]:
         if key in st.session_state:
             st.session_state[key] = False if key == "authenticated" else None
     st.session_state.portal_view = "dashboard"
+    st.session_state.must_change_password = False
     st.rerun()
 
 
 def _render_change_password_widget():
     with st.expander("🔑 Change Password"):
+        #st.caption(f"Password policy: minimum {MIN_PASSWORD_LENGTH} characters · at least 1 number (0-9) and 1 special character ({PASSWORD_SPECIAL_CHARS}) · must be changed every {PASSWORD_MAX_AGE_DAYS} days · account locks for {LOCKOUT_MINUTES} minutes after {FAILED_ATTEMPTS_LIMIT} consecutive failed sign-in attempts.")
         with st.form("change_password_form", clear_on_submit=True):
             current_pwd = st.text_input("Current Password", type="password", key="cp_current")
-            new_pwd = st.text_input("New Password", type="password", key="cp_new")
+            new_pwd = st.text_input("New Password", type="password", placeholder=f"At least {MIN_PASSWORD_LENGTH} chars, 1 number, 1 special ({PASSWORD_SPECIAL_CHARS})", key="cp_new")
             confirm_pwd = st.text_input("Confirm New Password", type="password", key="cp_confirm")
             cp_submitted = st.form_submit_button("Update Password", use_container_width=True)
         if cp_submitted:
@@ -3846,9 +5837,12 @@ def _render_change_password_widget():
                 if ok:
                     st.success(msg)
                     st.session_state.plain_password = new_pwd
+                    st.session_state.must_change_password = False
                 else:
                     st.error(msg)
 
+
+_handle_gehc_oidc_callback()
 
 if not st.session_state.authenticated:
     render_login_page()
@@ -3893,6 +5887,15 @@ else:
 
     if account_status == STATUS_PENDING:
         render_pending_screen()
+    elif st.session_state.get("must_change_password"):
+        render_header_banner("Password Expired", f"Welcome, {user.get('name')}")
+        st.markdown(f"""
+            <div class="pending-card">
+                <div style="font-size:17px;font-weight:700;color:{PRIMARY_PURPLE_DARK};margin-bottom:6px;">🔑 Your password has expired</div>
+                <div style="color:{TEXT_MUTED};font-size:14px;">Passwords must be changed every {PASSWORD_MAX_AGE_DAYS} days. Please set a new password (minimum {MIN_PASSWORD_LENGTH} characters, including at least one number and one special character from {PASSWORD_SPECIAL_CHARS}) below to continue.</div>
+            </div>
+            """, unsafe_allow_html=True)
+        _render_change_password_widget()
     elif is_admin_role and st.session_state.portal_view == "admin":
         render_admin_portal()
     else:
