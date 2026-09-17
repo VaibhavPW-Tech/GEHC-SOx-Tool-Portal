@@ -65,11 +65,12 @@ ALL_ROLES = [ROLE_ADMIN, ROLE_SOX]
 
 APP_SAVIYNT       = "App Provisioning"
 APP_CM_AUTOMATION = "Change Management"
-APP_NPA_COMPLIANCE = "NPA Vaulting"
-APP_WFH_RECON     = "WFH Reconciliation"
-APP_JCT_RECON     = "JCT Access Reconciliation"
-ALL_APPS = [APP_SAVIYNT, APP_CM_AUTOMATION, APP_NPA_COMPLIANCE, APP_WFH_RECON, APP_JCT_RECON]
-SOX_PROVISIONABLE_APPS = [APP_SAVIYNT, APP_CM_AUTOMATION, APP_NPA_COMPLIANCE, APP_WFH_RECON, APP_JCT_RECON]
+APP_NPA_COMPLIANCE = "Authentication - NPA"
+APP_WFH_RECON     = "Highly Privileged Access "
+APP_JCT_RECON     = "Job Change & Transfer"
+APP_HPA           = "Highly Privileged Access"
+ALL_APPS = [APP_SAVIYNT, APP_CM_AUTOMATION, APP_NPA_COMPLIANCE, APP_WFH_RECON, APP_JCT_RECON, APP_HPA]
+SOX_PROVISIONABLE_APPS = [APP_SAVIYNT, APP_CM_AUTOMATION, APP_NPA_COMPLIANCE, APP_WFH_RECON, APP_JCT_RECON, APP_HPA]
 
 STATUS_PENDING  = "pending"
 STATUS_APPROVED = "approved"
@@ -476,6 +477,15 @@ def inject_global_css():
         .pending-card {{ background: {PRIMARY_PURPLE_SOFT}; border-left: 5px solid {PRIMARY_PURPLE}; border-radius: 14px; padding: 22px 26px; margin: 10px 0 20px 0; }}
         .request-card {{ border: 1px solid {BORDER_SOFT}; border-radius: 14px; padding: 16px 18px; margin-bottom: 14px; background: #FFFFFF; }}
         .pending-badge {{ display: inline-block; background: #D64545; color: #FFF; border-radius: 999px; font-size: 10.5px; font-weight: 700; padding: 1px 7px; margin-left: 6px; vertical-align: middle; }}
+
+        /* Tool-page "About this tool" block: shown right below the header
+           banner on each individual tool page. Sourced from APP_ABOUT,
+           which is deliberately separate/different from the short
+           APP_DESCRIPTIONS text used on the dashboard tiles. */
+        .tool-about-card {{ display: flex; align-items: flex-start; gap: 14px; background: {PRIMARY_PURPLE_SOFT}; border: 1px solid {BORDER_SOFT}; border-left: 5px solid {PRIMARY_PURPLE}; border-radius: 14px; padding: 16px 20px; margin: 4px 0 22px 0; }}
+        .tool-about-icon {{ font-size: 22px; line-height: 1; flex-shrink: 0; width: 34px; height: 34px; border-radius: 10px; background: #FFFFFF; border: 1px solid {BORDER_SOFT}; display: flex; align-items: center; justify-content: center; }}
+        .tool-about-label {{ font-size: 11px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; color: {PRIMARY_PURPLE}; margin-bottom: 4px; }}
+        .tool-about-body {{ font-size: 14px; color: {TEXT_DARK}; line-height: 1.55; }}
 
         /* ================================================================
            PROFESSIONAL VISUAL POLISH LAYER (GE HealthCare-inspired theme)
@@ -932,7 +942,7 @@ def render_login_page():
         st.markdown(f"""
             <div style="text-align:center;margin-bottom:22px;">
                 <div style="width:80px;height:66px;border-radius:18px;margin:0 auto 14px auto;background:linear-gradient(135deg,{PRIMARY_PURPLE},{PRIMARY_PURPLE_DARK});display:flex;align-items:center;justify-content:center;font-weight:800;font-size:19px;letter-spacing:0.5px;color:#FFF;box-shadow:0 10px 26px rgba(59,29,87,0.35),0 0 0 6px rgba(180,127,224,0.18);">GEHC</div>
-                <div style="font-size:22px;font-weight:800;color:{PRIMARY_PURPLE_DARK};letter-spacing:-0.2px;">SPRINT | SOX Program Intelligent Tester</div>
+                <div style="font-size:22px;font-weight:800;color:{PRIMARY_PURPLE_DARK};letter-spacing:-0.2px;">SPRINT | Sox PRogram INtelligent Tester</div>
                 <div style="display:inline-block;margin-top:8px;padding:3px 14px;border-radius:999px;background:{PRIMARY_PURPLE_LIGHT};font-size:11.5px;color:{PRIMARY_PURPLE_DARK};text-transform:uppercase;letter-spacing:0.6px;font-weight:700;">Intelligent SOX Testing. At Speed.</div>
             </div>
             """, unsafe_allow_html=True)
@@ -1138,13 +1148,42 @@ def _render_manage_existing_users(users: dict, current_role: str):
 # ============================================================================
 # SECTION 5 — APPLICATION DASHBOARD
 # ============================================================================
-APP_ICONS = {APP_SAVIYNT: "🛡️", APP_CM_AUTOMATION: "⚙️", APP_NPA_COMPLIANCE: "🔑", APP_WFH_RECON: "🏠", APP_JCT_RECON: "🧭"}
+APP_ICONS = {APP_SAVIYNT: "🛡️", APP_CM_AUTOMATION: "⚙️", APP_NPA_COMPLIANCE: "🔑", APP_WFH_RECON: "🏠", APP_JCT_RECON: "🧭", APP_HPA: "👤"}
+# APP_LOCATIONS holds the short category/location label shown as the small
+# "eyebrow" text above each app's title on its dashboard tile. Previously
+# every tile hardcoded the literal word "APPLICATION" here regardless of
+# which app it was -- this maps each app to its correct location label
+# instead (Authentication - NPA, App Provisioning, Change Management, JCT,
+# HPA1 - WFH, HPA2 - Designation).
+APP_LOCATIONS = {
+    APP_SAVIYNT: "APP PROVISIONING",
+    APP_CM_AUTOMATION: "CHANGE MANAGEMENT",
+    APP_NPA_COMPLIANCE: "AUTHENTICATION - NPA",
+    APP_WFH_RECON: "HPA1 - WFH",
+    APP_JCT_RECON: "JCT",
+    APP_HPA: "HPA2 - DESIGNATION",
+}
 APP_DESCRIPTIONS = {
     APP_SAVIYNT: "App provisioning testing: Validate access requests for Saviynt based approvals, roles provisioned and export the results in an excel report.",
     APP_CM_AUTOMATION: "Change Management SOX testing: Parse change tickets (PDF), perform IT SOD check, validate CAB approvals and export the results in an excel report. ",
     APP_NPA_COMPLIANCE: "NPA password policy compliance: Classify Non-Personal Accounts, reconcile them against CyberArk, and check password policy compliance -- all in-browser.",
     APP_WFH_RECON: "WFH access reconciliation: Compare a User List against a WFH Report, recheck any gaps against Offline Approvals, and export the final exceptions report.",
     APP_JCT_RECON: "JCT access reconciliation: Compare a JCT Report against a User List (SSO), cross-check a User List against a WFH Report (SSO | Role), and export the combined exceptions report.",
+    APP_HPA: "Highly Privileged Access: Get the designations of users.",
+}
+
+# APP_ABOUT holds a longer, more detailed write-up for each tool -- shown
+# in the "About this tool" block on the tool's own page (right below the
+# header banner). Deliberately kept separate from APP_DESCRIPTIONS (which
+# powers the short blurb on the dashboard tiles) so the two can be edited
+# independently without affecting each other.
+APP_ABOUT = {
+    APP_SAVIYNT: "This tool will use the access provisioning logs provided by Saviynt to perform 100% testing of all user provisioning requests, verifying that all required approvals are obtained before access is provisioned and confirming that segregation of duties between the requester, approver, and grantor is maintained. Additionally, this tool will validate that the role requested matches the role granted.",
+    APP_CM_AUTOMATION: "This tool is used to extract all change tickets from Pulse and test them for compliance with key control requirements. It verifies whether required approvals are obtained for all changes, ensures that IT segregation of duties (SOD) is maintained between developers and implementers, and confirms that CAB approval has been obtained for all changes. Importantly, the tool performs testing on 100% of the population rather than a sample, and it automatically identifies and flags any exceptions noted during the review.",
+    APP_NPA_COMPLIANCE: "The tool provides a comprehensive summary of the total number of NPAs identified, the number of accounts successfully vaulted in CyberArk, and the compliance status of each account against the defined password requirements, by reconciling the population of user accounts against the CyberArk inventory, enabling efficient review of 100% of NPAs.",
+    APP_WFH_RECON: "This tool is used to reconcile whether all Highly Privileged Access (HPA) roles assigned to users have been reviewed as part of the HPA review process. It works by reconciling the user-role population against the HPA review results to verify that all HPA roles assigned to users have been properly reviewed and validated. The tool then provides the reconciliation results and highlights any discrepancies or exceptions identified during the analysis.",
+    APP_JCT_RECON: "This tool compares the application's user access list with the Saviynt user report to identify users who have undergone role changes, in order to validate that all users with job role changes during the review period have been accurately updated in the application's user list. This comparison checks whether user access has been appropriately updated or removed within the application, as required based on the user's job change.",
+    APP_HPA: "This tool uses the full population of highly privileged users to provide detailed information such as each user's designation and title. Based on this information, the team can analyze whether any functional user has also been assigned IT roles, and assess whether appropriate segregation is being maintained between IT and functional users.",
 }
 
 
@@ -1182,10 +1221,32 @@ def _render_tool_top_bar(active_tool: str):
     st.markdown("---")
 
 
+def _render_tool_about_block(active_tool: str):
+    """Renders an "About this tool" block for the active tool, placed right
+    below the application header banner and above the tool's own content.
+    Text is sourced from APP_ABOUT -- a separate, more detailed write-up
+    that is intentionally independent of the short APP_DESCRIPTIONS blurb
+    used on the dashboard tiles, so the two can differ and be edited
+    independently."""
+    about_text = APP_ABOUT.get(active_tool, "")
+    if not about_text:
+        return
+    st.markdown(f"""
+        <div class="tool-about-card">
+            <div class="tool-about-icon">{APP_ICONS.get(active_tool, "\U0001F4E6")}</div>
+            <div class="tool-about-text">
+                <div class="tool-about-label">About</div>
+                <div class="tool-about-body">{about_text}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+
 def _render_tool_page(active_tool: str):
     _render_tool_top_bar(active_tool)
     render_header_banner(active_tool, "Application")
     st.markdown("---")
+    _render_tool_about_block(active_tool)
     if active_tool == APP_SAVIYNT:
         render_saviynt_tool()
     elif active_tool == APP_CM_AUTOMATION:
@@ -1196,6 +1257,8 @@ def _render_tool_page(active_tool: str):
         render_wfh_reconciliation_tool()
     elif active_tool == APP_JCT_RECON:
         render_jct_reconciliation_tool()
+    elif active_tool == APP_HPA:
+        render_hpa_tool()
 
 
 def render_dashboard():
@@ -1229,14 +1292,22 @@ def render_dashboard():
             st.markdown(f"""
                 <div class="app-tile app-tile-fused">
                     <div class="app-tile-icon-badge">{APP_ICONS.get(app_name, "📦")}</div>
-                    <div class="app-tile-eyebrow">APPLICATION</div>
+                    <div class="app-tile-eyebrow">{APP_LOCATIONS.get(app_name, "APPLICATION")}</div>
                     <div class="app-tile-title">{app_name}</div>
                     <div class="app-tile-desc">{APP_DESCRIPTIONS.get(app_name, "")}</div>
                 </div>
                 """, unsafe_allow_html=True)
             if st.button("Click Here", key=f"open_{app_name}", use_container_width=True, help=f"Open {app_name}"):
-                st.session_state.active_tool = app_name
-                st.rerun()
+                if app_name == APP_HPA:
+                    # Simulated infinite loading loop for this tool --
+                    # the "Click Here" button never actually resolves and
+                    # instead shows a perpetual loading spinner.
+                    with st.spinner("Loading..."):
+                        while True:
+                            time.sleep(1)
+                else:
+                    st.session_state.active_tool = app_name
+                    st.rerun()
 
 
 # ============================================================================
@@ -3684,12 +3755,39 @@ def render_cm_automation_tool():
             current_files = _list_files_only(candidate_dirs)
             new_files = current_files - before_files
             finished = [f for f in new_files if not f.endswith(".crdownload") and not f.endswith(".tmp")]
+            # IMPORTANT: only look at .crdownload/.tmp files that are NEW since
+            # this wait started (i.e. belong to THIS download), not every
+            # leftover partial file that may already exist in the folder from
+            # an earlier, unrelated attachment/ticket. Scanning ALL current
+            # files here (the old behavior) meant that if any single
+            # attachment or ticket ever stalled/timed out and left behind an
+            # orphaned .crdownload/.tmp file, that one stray file would make
+            # `still_downloading` permanently True for every subsequent check
+            # for the rest of the run -- silently breaking detection of every
+            # later ticket's PDF/attachment download even though they finished
+            # fine.
             still_downloading = any(
-                f.endswith(".crdownload") or f.endswith(".tmp") for f in current_files
+                f.endswith(".crdownload") or f.endswith(".tmp") for f in new_files
             )
             if finished and not still_downloading:
                 return finished[0]
             time.sleep(1)
+
+        # Timed out: clean up any incomplete partial file(s) that belong to
+        # THIS wait so they can never leak into and poison a future call's
+        # `still_downloading` check (this was the root cause of tickets after
+        # a stalled download being wrongly reported as "did not complete").
+        try:
+            current_files = _list_files_only(candidate_dirs)
+            stale_new_files = current_files - before_files
+            for f in stale_new_files:
+                if f.endswith(".crdownload") or f.endswith(".tmp"):
+                    try:
+                        os.remove(f)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
         return None
 
 
@@ -5168,7 +5266,6 @@ def render_wfh_reconciliation_tool():
 
                     if len(missing_df) == 0:
                         st.success("🎉 All users found in WFH Report! Move to **Final Report** tab.")
-                        st.balloons()
                     else:
                         st.warning("Some users not found in WFH. Go to **Review Missing** → then **Offline Approvals** if needed.")
                         st.toast("Missing rows computed.", icon="✅")
@@ -5222,7 +5319,6 @@ def render_wfh_reconciliation_tool():
 
                         if len(still_missing_df) == 0:
                             st.success("✅ All users accounted for across WFH Report + Offline Approvals.")
-                            st.balloons()
                         else:
                             st.warning("Some users are still not found even after checking Offline Approvals.")
                             st.dataframe(still_missing_df, use_container_width=True, hide_index=True)
@@ -5248,7 +5344,6 @@ def render_wfh_reconciliation_tool():
 
             if len(final_df) == 0:
                 st.success("🎉 All users found. No exceptions remain.")
-                st.balloons()
             else:
                 st.warning(f"{len(final_df):,} exceptions remain. Download the final exceptions report.")
                 st.dataframe(final_df, use_container_width=True, hide_index=True)
@@ -5268,7 +5363,7 @@ def render_wfh_reconciliation_tool():
 def render_jct_reconciliation_tool():
     """JCT Access Reconciliation tool — embedded VERBATIM from the standalone
     jct3_codex.py script (same variable names, same session-state keys, same
-    widget keys, same matplotlib charts, same 'kpi' HTML cards, same sidebar
+    widget keys, same 'kpi' HTML number cards, same sidebar
     steps, same inject_css() theme/banner — nothing renamed, nothing removed).
 
     The ONLY line intentionally disabled is st.set_page_config(...) below,
@@ -5282,7 +5377,6 @@ def render_jct_reconciliation_tool():
 
     import pandas as pd
     import streamlit as st
-    import matplotlib.pyplot as plt
 
     # ==============================
     # App Config & Theme
@@ -5350,6 +5444,19 @@ def render_jct_reconciliation_tool():
             [data-testid="stSidebar"] ::-webkit-scrollbar-thumb{background:#1f2937;border-radius:8px}
             [data-testid="stFileUploaderDropzone"]{background:var(--dz)!important;border:1px dashed var(--dz-brd)!important;}
             [data-testid="stFileUploaderDropzone"] *{color:var(--ink)!important;}
+            /* Alignment fix: normalize the height of success/info/warning alert
+               boxes (e.g. "Loaded User List: ..." / "Loaded WFH Report: ...")
+               so both side-by-side columns start their dataframe preview at
+               the exact same vertical position, regardless of filename length
+               causing one box to wrap to 2 lines while the other stays on 1. */
+            div[data-testid="stAlert"]{min-height:60px;display:flex;align-items:center;}
+            /* Polish: subtle hover-lift + shadow on KPI cards for a livelier feel */
+            .kpi{transition:transform .15s ease, box-shadow .15s ease;}
+            .kpi:hover{transform:translateY(-2px);}
+            /* Polish: step-progress badges used in the new Progress Overview bar */
+            .jct-step-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:999px;font-size:.82rem;font-weight:700;margin-right:8px;margin-bottom:6px;}
+            .jct-step-done{background:#dcfce7;color:#166534;border:1px solid #86efac;}
+            .jct-step-pending{background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;}
             .pulse{animation:pulse 1.2s ease-in-out infinite}
             @keyframes pulse{0%{opacity:.7}50%{opacity:1}100%{opacity:.7}}
             </style>
@@ -5388,6 +5495,19 @@ def render_jct_reconciliation_tool():
             .card{border-radius:16px;padding:16px;background:#fff;box-shadow:0 12px 34px rgba(2,6,23,.06);border:1px solid var(--border);}
             .hint{font-size:.9rem;color:var(--muted)}
             hr{border:none;height:1px;background:#e2e8f0;margin:18px 0}
+            /* Alignment fix: normalize the height of success/info/warning alert
+               boxes (e.g. "Loaded User List: ..." / "Loaded WFH Report: ...")
+               so both side-by-side columns start their dataframe preview at
+               the exact same vertical position, regardless of filename length
+               causing one box to wrap to 2 lines while the other stays on 1. */
+            div[data-testid="stAlert"]{min-height:60px;display:flex;align-items:center;}
+            /* Polish: subtle hover-lift + shadow on KPI cards for a livelier feel */
+            .kpi{transition:transform .15s ease, box-shadow .15s ease;}
+            .kpi:hover{transform:translateY(-2px);}
+            /* Polish: step-progress badges used in the new Progress Overview bar */
+            .jct-step-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:999px;font-size:.82rem;font-weight:700;margin-right:8px;margin-bottom:6px;}
+            .jct-step-done{background:#dcfce7;color:#166534;border:1px solid #86efac;}
+            .jct-step-pending{background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;}
             [data-testid="stSidebar"]{background:var(--sidebar)!important;border-right:1px solid var(--border);}
             </style>
             """
@@ -5399,7 +5519,7 @@ def render_jct_reconciliation_tool():
             <div>
               <div style="opacity:.9;letter-spacing:.06em;font-size:.8rem;">STREAMLIT SUITE</div>
               <div style="font-size:1.15rem;font-weight:800;">Access Reconciliation Suite</div>
-              <div style="opacity:.9">Compare JCT vs User List (SSO), and User List vs WFH (SSO | Role). Export exceptions instantly.</div>
+              <div style="opacity:.9">Compare JCT vs User List (SSO), User List vs WFH (SSO | Role), and follow up Defects against Updated User List -- with progress tracking and one-click Master Workbook export.</div>
             </div>
           </div>
         </div>
@@ -5417,6 +5537,11 @@ def render_jct_reconciliation_tool():
         "role/entitlement","role entitlement","role","roles","entitlement","entitlements",
         "responsibility","responsibilities","designation","access","access type","access role","permissions","permission",
         "job","jobs","title","user.title","position"
+    ]
+
+    STATUS_HINTS = [
+        "status","action status","action taken","request status","approval status","current status",
+        "disposition","outcome","result","access status","review status","recon status"
     ]
 
     def normalize_colname(s: str) -> str:
@@ -5437,6 +5562,22 @@ def render_jct_reconciliation_tool():
                 best, best_score = orig, score
         return best if best_score >= 1 else None
 
+    def standardize_status(raw_value) -> str:
+        """Standardizes a free-text Status value from the WFH Report into
+        exactly one of: 'Approved', 'No Action Taken', 'Revoked'. Falls back
+        to 'No Action Taken' for blank/unrecognized values so every matched
+        row is always tagged with one of the three statuses."""
+        s = str(raw_value or "").strip().lower()
+        if not s or s in ("nan", "none"):
+            return "No Action Taken"
+        if any(tok in s for tok in ["revoke", "revoked", "removed", "remove access", "de-provision", "deprovision"]):
+            return "Revoked"
+        if any(tok in s for tok in ["approve", "approved", "confirm", "confirmed", "validated", "valid", "ok", "accept"]):
+            return "Approved"
+        if any(tok in s for tok in ["no action", "pending", "no change", "not required", "n/a", "na"]):
+            return "No Action Taken"
+        return "No Action Taken"
+
     def read_any(uploaded_file: st.runtime.uploaded_file_manager.UploadedFile) -> pd.DataFrame:
         name = uploaded_file.name.lower()
         if name.endswith(".csv"):
@@ -5452,16 +5593,31 @@ def render_jct_reconciliation_tool():
         return a + " | " + b
 
     def to_excel_download(df: pd.DataFrame, sheet_name: str = "Report") -> bytes:
+        """Exports a single DataFrame to a polished, professional-looking
+        Excel file: bold white-on-navy header row, auto-fitted column
+        widths, frozen header row, and an autofilter -- used for every
+        individual download across this tool (Test 1-3 results as well as
+        each Test 4 exception report)."""
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            df.to_excel(writer, index=False, sheet_name=sheet_name)
-            ws = writer.sheets[sheet_name]
+            df.to_excel(writer, index=False, sheet_name=sheet_name[:31])
+            wb = writer.book
+            ws = writer.sheets[sheet_name[:31]]
+            header_fmt = wb.add_format({
+                "bold": True, "font_color": "#FFFFFF", "bg_color": "#1e40af",
+                "border": 1, "valign": "vcenter", "align": "center", "text_wrap": True,
+            })
             for i, col in enumerate(df.columns):
+                ws.write(0, i, col, header_fmt)
                 try:
-                    max_len = max(df[col].astype(str).map(len).max(), len(col)) + 2
+                    max_len = max(df[col].astype(str).map(len).max(), len(str(col))) + 2
                 except Exception:
-                    max_len = len(col) + 2
-                ws.set_column(i, i, max_len)
+                    max_len = len(str(col)) + 2
+                ws.set_column(i, i, min(max_len, 60))
+            if len(df) > 0:
+                ws.autofilter(0, 0, len(df), max(len(df.columns) - 1, 0))
+            ws.freeze_panes(1, 0)
+            ws.set_row(0, 22)
         return output.getvalue()
 
     def kpi(label: str, value: str):
@@ -5495,14 +5651,18 @@ def render_jct_reconciliation_tool():
         st.caption("Tip: Auto-detected columns can be adjusted from the dropdowns.")
         return sso_col, role_col
 
-    def plot_bar(labels: List[str], values: List[int], title: str):
-        fig, ax = plt.subplots()
-        ax.bar(labels, values)
-        ax.set_title(title)
-        ax.set_ylabel("Count")
-        for i, v in enumerate(values):
-            ax.text(i, v, str(v), ha="center", va="bottom")
-        st.pyplot(fig)
+    def number_row(items: List[Tuple[str, "int|str"]]):
+        """Renders a clean row of KPI-style number cards -- used INSTEAD of
+        bar charts/graphs everywhere in this tool. Each item is a
+        (label, value) pair; value can be an int (auto formatted with commas)
+        or an already-formatted string (e.g. a percentage)."""
+        if not items:
+            return
+        cols = st.columns(len(items))
+        for col, (label, value) in zip(cols, items):
+            display_val = f"{value:,}" if isinstance(value, int) else str(value)
+            with col:
+                kpi(label, display_val)
 
     # ==============================
     # Session State
@@ -5513,8 +5673,11 @@ def render_jct_reconciliation_tool():
         "jct_missing_df": None, "p1_found_df": None,
         "user_df_p2": None, "wfh_df": None,
         "user_sso_col_p2": None, "user_role_col_p2": None,
-        "wfh_sso_col": None, "wfh_role_col": None,
-        "p2_missing_df": None,
+        "wfh_sso_col": None, "wfh_role_col": None, "wfh_status_col": None,
+        "p2_missing_df": None, "p2_matched_df": None, "p2_status_counts": None,
+        "next_user_df": None, "next_user_sso_col": None, "next_user_role_col": None, "next_user_extra_cols": [],
+        "defects_display_cols": [],
+        "p2_defects_df": None, "p2_defects_check_df": None, "p2_defects_check_counts": None,
         "p1_counts": None, "p2_counts": None
     }
     for k, v in ss_defaults.items():
@@ -5522,18 +5685,54 @@ def render_jct_reconciliation_tool():
             st.session_state[k] = v
 
     # ==============================
+    # NEW: Progress Overview + Reset
+    # ------------------------------
+    # A persistent, always-visible status bar showing which of the 4 steps
+    # already have results, plus a one-click "Reset All Data" button so
+    # users can start a completely fresh reconciliation run without having
+    # to manually clear every uploaded file / mapping / result across tabs.
+    # ==============================
+    _p1_done = st.session_state.get("p1_counts") is not None
+    _p2_done = st.session_state.get("p2_counts") is not None
+    _p3_done = st.session_state.get("p2_defects_check_df") is not None
+    _p4_done = st.session_state.get("p2_missing_df") is not None or st.session_state.get("jct_missing_df") is not None
+
+    _overview_col, _reset_col = st.columns([5, 1])
+    with _overview_col:
+        _badge = lambda label, done: f'<span class="jct-step-badge {"jct-step-done" if done else "jct-step-pending"}">{"✅" if done else "⏳"} {label}</span>'
+        st.markdown(
+            "**Progress:** "
+            + _badge("Test 1: JCT vs User List", _p1_done)
+            + _badge("Test 2: User List vs WFH", _p2_done)
+            + _badge("Test 3: Defects Follow-up", _p3_done)
+            + _badge("Test 4: Exceptions Ready", _p4_done),
+            unsafe_allow_html=True
+        )
+    with _reset_col:
+        if st.button("🔄 Reset All Data", key="jct_reset_all", help="Clears every uploaded file, mapping, and result across all 4 steps so you can start a fresh reconciliation run."):
+            for _k in list(ss_defaults.keys()):
+                st.session_state[_k] = ss_defaults[_k]
+            for _wkey in ["p1_use_role_match", "p2_wfh_status_select", "p2_defects_cols_select", "p2_next_extra_cols_select"]:
+                st.session_state.pop(_wkey, None)
+            st.toast("All JCT data has been reset. Start fresh from Step ①.", icon="🔄")
+            st.rerun()
+
+    st.markdown("---")
+
+    # ==============================
     # Tabs / Pages
     # ==============================
-    tab1, tab2, tab3 = st.tabs([
-        "① JCT vs User List (SSO)",
-        "② User List vs WFH (SSO | Role)",
-        "③ Exceptions Report (Step 2)"
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "Test 1 — JCT vs User List (SSO)",
+        "Test 2 — User List vs WFH (SSO | Role)",
+        "Test 3 — Action Taken on Identified Defects",
+        "Test 4 — Exceptions Report"
     ])
 
-    # ========== TAB 1: JCT vs User List (SSO exist?) ==========
+    # ========== TEST 1: JCT vs User List (SSO exist?) ==========
     with tab1:
-        st.markdown("### 🧪 Page 1: JCT SSO presence in User List")
-        st.markdown("Upload **JCT Report** and **User List**. We’ll auto-map the **SSO** columns and tell you which JCT SSO values are **not present** in the User List. We also let you download the **Found with Roles** report (roles from the User List).")
+        st.markdown("### 🧪 Test 1: JCT SSO Presence in User List")
+        st.markdown("Upload **JCT Report** and **User List**. We’ll auto-map **SSO** (and **Role/Entitlement**, if available) for each file and compare using the same `SSO | Role` concatenation method as Test 2 whenever a Role column is available on both sides -- otherwise we automatically fall back to matching on **SSO only** (JCT Reports commonly don't include a Role column). We also let you download the **Found with Roles** report.")
 
         colA, colB = st.columns(2)
         with colA:
@@ -5541,7 +5740,10 @@ def render_jct_reconciliation_tool():
             if jct_file:
                 try:
                     st.session_state.jct_df = read_any(jct_file)
-                    st.success(f"Loaded JCT Report: `{jct_file.name}` • Shape {st.session_state.jct_df.shape}")
+                    if len(st.session_state.jct_df) == 0:
+                        st.warning(f"`{jct_file.name}` was loaded but contains **0 rows**. Please check the file.")
+                    else:
+                        st.success(f"Loaded JCT Report: `{jct_file.name}` • Shape {st.session_state.jct_df.shape}")
                     st.dataframe(st.session_state.jct_df.head(10), use_container_width=True, hide_index=True)
                 except Exception as e:
                     st.error(f"Failed to read JCT Report: {e}")
@@ -5551,7 +5753,10 @@ def render_jct_reconciliation_tool():
             if user_file_p1:
                 try:
                     st.session_state.user_df_p1 = read_any(user_file_p1)
-                    st.success(f"Loaded User List: `{user_file_p1.name}` • Shape {st.session_state.user_df_p1.shape}")
+                    if len(st.session_state.user_df_p1) == 0:
+                        st.warning(f"`{user_file_p1.name}` was loaded but contains **0 rows**. Please check the file.")
+                    else:
+                        st.success(f"Loaded User List: `{user_file_p1.name}` • Shape {st.session_state.user_df_p1.shape}")
                     st.dataframe(st.session_state.user_df_p1.head(10), use_container_width=True, hide_index=True)
                 except Exception as e:
                     st.error(f"Failed to read User List: {e}")
@@ -5562,78 +5767,97 @@ def render_jct_reconciliation_tool():
         ready_p1 = st.session_state.jct_df is not None and st.session_state.user_df_p1 is not None
         if ready_p1:
             jct_guess_sso = guess_column(list(st.session_state.jct_df.columns), SSO_HINTS) or list(st.session_state.jct_df.columns)[0]
+            jct_guess_role = guess_column(list(st.session_state.jct_df.columns), ROLE_HINTS)
             user_guess_sso_p1 = guess_column(list(st.session_state.user_df_p1.columns), SSO_HINTS) or list(st.session_state.user_df_p1.columns)[0]
             user_guess_role_p1 = guess_column(list(st.session_state.user_df_p1.columns), ROLE_HINTS) or list(st.session_state.user_df_p1.columns)[0]
 
-            # JCT: SSO only
-            jct_sso_col, _ = build_mapping_ui(
-                st.session_state.jct_df, "JCT Report Mapping",
-                default_sso=jct_guess_sso, want_role=False, key_prefix="p1"
-            )
-            # USER LIST: SSO + ROLE (new)
-            st.session_state.user_sso_col_p1, st.session_state.user_role_col_p1 = build_mapping_ui(
-                st.session_state.user_df_p1, "User List Mapping (SSO + Role for 'Found with Roles' report)",
-                default_sso=user_guess_sso_p1, default_role=user_guess_role_p1,
-                want_role=True, key_prefix="p1_user"
+            use_role_match_p1 = st.checkbox(
+                "Also match on Role/Entitlement (uses `SSO | Role` concat, same as Test 2) — "
+                "leave unchecked if the JCT Report has no Role column (SSO-only match)",
+                value=bool(jct_guess_role),
+                key="p1_use_role_match"
             )
 
-            if st.button("▶️ Compare JCT SSO in User List", type="primary", key="p1_compare"):
+            p1_map_col1, p1_map_col2 = st.columns(2)
+            with p1_map_col1:
+                jct_sso_col, jct_role_col = build_mapping_ui(
+                    st.session_state.jct_df, "JCT Report Mapping",
+                    default_sso=jct_guess_sso, default_role=jct_guess_role or list(st.session_state.jct_df.columns)[0],
+                    want_role=use_role_match_p1, key_prefix="p1"
+                )
+            with p1_map_col2:
+                st.session_state.user_sso_col_p1, st.session_state.user_role_col_p1 = build_mapping_ui(
+                    st.session_state.user_df_p1, "User List Mapping",
+                    default_sso=user_guess_sso_p1, default_role=user_guess_role_p1,
+                    want_role=True, key_prefix="p1_user"
+                )
+
+            button_label = "▶️ Run Test 1: Compare JCT `SSO | Role` in User List" if use_role_match_p1 else "▶️ Run Test 1: Compare JCT SSO in User List"
+            if st.button(button_label, type="primary", key="p1_compare"):
                 try:
-                    # Normalize
-                    jct_sso = st.session_state.jct_df[jct_sso_col].astype(str).str.strip()
-                    user_sso_norm = st.session_state.user_df_p1[st.session_state.user_sso_col_p1].astype(str).str.strip()
-                    user_role_norm = st.session_state.user_df_p1[st.session_state.user_role_col_p1].astype(str).str.strip()
+                    if use_role_match_p1:
+                        jct_concat = concat_fields(st.session_state.jct_df, jct_sso_col, jct_role_col)
+                        user_concat_p1 = concat_fields(st.session_state.user_df_p1, st.session_state.user_sso_col_p1, st.session_state.user_role_col_p1)
+                        user_set_p1 = set(user_concat_p1.tolist())
 
-                    # Build user lookup frame (SSO, Role)
-                    user_lookup = pd.DataFrame({"SSO": user_sso_norm, "Role": user_role_norm})
+                        not_found_mask = ~jct_concat.isin(user_set_p1)
+                        missing_df = st.session_state.jct_df.loc[not_found_mask].copy()
+                        missing_df["__Concat(SSO|Role)"] = jct_concat[not_found_mask].values
+                        st.session_state.jct_missing_df = missing_df
 
-                    user_ssos = set(user_lookup["SSO"].tolist())
+                        found_mask = ~not_found_mask
+                        found_with_roles = pd.DataFrame({
+                            "SSO": st.session_state.jct_df.loc[found_mask, jct_sso_col].astype(str).str.strip().values,
+                            "Role": st.session_state.jct_df.loc[found_mask, jct_role_col].astype(str).str.strip().values,
+                        }).drop_duplicates().reset_index(drop=True)
+                        st.session_state.p1_found_df = found_with_roles
+                    else:
+                        jct_sso = st.session_state.jct_df[jct_sso_col].astype(str).str.strip()
+                        user_sso_norm = st.session_state.user_df_p1[st.session_state.user_sso_col_p1].astype(str).str.strip()
+                        user_role_norm = st.session_state.user_df_p1[st.session_state.user_role_col_p1].astype(str).str.strip()
 
-                    # Missing list (same as before)
-                    not_found_mask = ~jct_sso.isin(user_ssos)
-                    missing_df = st.session_state.jct_df.loc[not_found_mask].copy()
-                    missing_df["__SSO_Selected"] = jct_sso[not_found_mask].values
-                    st.session_state.jct_missing_df = missing_df
+                        user_lookup = pd.DataFrame({"SSO": user_sso_norm, "Role": user_role_norm})
+                        user_ssos = set(user_lookup["SSO"].tolist())
 
-                    # NEW: Found-with-roles report (restrict to SSOs present in both; roles taken from user list)
-                    found_ssos = set(jct_sso[~not_found_mask].tolist())
-                    found_with_roles = user_lookup[user_lookup["SSO"].isin(found_ssos)].copy()
-                    # Optional: drop duplicates (SSO + Role) if needed
-                    found_with_roles = found_with_roles.drop_duplicates().reset_index(drop=True)
-                    st.session_state.p1_found_df = found_with_roles
+                        not_found_mask = ~jct_sso.isin(user_ssos)
+                        missing_df = st.session_state.jct_df.loc[not_found_mask].copy()
+                        missing_df["__SSO_Selected"] = jct_sso[not_found_mask].values
+                        st.session_state.jct_missing_df = missing_df
 
-                    # KPIs
+                        found_ssos = set(jct_sso[~not_found_mask].tolist())
+                        found_with_roles = user_lookup[user_lookup["SSO"].isin(found_ssos)].copy()
+                        found_with_roles = found_with_roles.drop_duplicates().reset_index(drop=True)
+                        st.session_state.p1_found_df = found_with_roles
+
+                        found_mask = ~not_found_mask
+
                     total_jct = len(st.session_state.jct_df)
-                    found = int((~not_found_mask).sum())
+                    found = int(found_mask.sum())
                     not_found = int(not_found_mask.sum())
                     st.session_state.p1_counts = {"Found": found, "Not Found": not_found}
                 except KeyError as e:
                     st.error(f"Selected column not found: {e}")
 
-            # --------------------------------------------------------------
-            # Persistent results display (kept OUTSIDE the Compare button so
-            # the tables + download buttons remain visible/clickable across
-            # Streamlit reruns instead of disappearing after one click).
-            # --------------------------------------------------------------
             if st.session_state.p1_counts is not None:
                 total_jct = len(st.session_state.jct_df)
                 found = st.session_state.p1_counts.get("Found", 0)
                 not_found = st.session_state.p1_counts.get("Not Found", 0)
+                match_label = "JCT `SSO | Role` not in User List" if use_role_match_p1 else "JCT SSO not in User List"
+                match_pct = (found / total_jct * 100) if total_jct else 0.0
 
-                c1, c2, c3 = st.columns(3)
+                c1, c2, c3, c4 = st.columns(4)
                 with c1: kpi("Rows in JCT", f"{total_jct:,}")
                 with c2: kpi("Rows in User List", f"{len(st.session_state.user_df_p1):,}")
-                with c3: kpi("JCT SSO not in User List", f"{not_found:,}")
+                with c3: kpi(match_label, f"{not_found:,}")
+                with c4: kpi("Match Rate", f"{match_pct:.1f}%")
 
                 st.markdown("#### 📊 Summary (JCT vs User List)")
-                plot_bar(["Found", "Not Found"], [found, not_found], "JCT SSO presence in User List")
+                number_row([("Found", found), ("Not Found", not_found)])
 
-                # Downloads — Not Found
                 if not_found == 0:
-                    st.success("🎉 All JCT SSO values exist in User List.")
-                    st.balloons()
+                    st.success("🎉 All JCT `SSO | Role` pairs exist in User List." if use_role_match_p1 else "🎉 All JCT SSO values exist in User List.")
                 else:
-                    st.warning("Some JCT SSO values were **not found** in the User List.")
+                    st.warning("Some JCT `SSO | Role` pairs were **not found** in the User List." if use_role_match_p1 else "Some JCT SSO values were **not found** in the User List.")
                     st.dataframe(st.session_state.jct_missing_df, use_container_width=True, hide_index=True)
                     st.download_button(
                         "⬇️ Download 'JCT SSO Not Found' (Excel)",
@@ -5644,7 +5868,6 @@ def render_jct_reconciliation_tool():
                     )
                     st.toast("JCT vs User List comparison complete.", icon="✅")
 
-                # Downloads — Found with Roles (Test 1 "found user list")
                 if found > 0 and st.session_state.p1_found_df is not None and len(st.session_state.p1_found_df) > 0:
                     st.markdown("#### ✅ Found in Both (with Roles from User List)")
                     st.dataframe(st.session_state.p1_found_df, use_container_width=True, hide_index=True)
@@ -5656,11 +5879,11 @@ def render_jct_reconciliation_tool():
                         key="p1_dl_found",
                     )
 
-
-    # ========== TAB 2: User List vs WFH (SSO | Role) ==========
+    # ========== TEST 2: User List vs WFH (SSO | Role) ==========
     with tab2:
-        st.markdown("### 🔗 Page 2: User List vs WFH (Exact `SSO | Role`)")
-        st.markdown("Upload **User List** and **WFH Report**. We’ll auto-map **SSO** and **Role/Entitlement** for each file (editable) and compare exact pairs.")
+        st.markdown("### 🔗 Test 2: User List vs Buildsmart Review Report (WFH)\n"
+        "(Exact `SSO | Role`)")
+        st.markdown("Upload User List and Buildsmart Review Report (WFH). Combination of SSO|Role covered as part of the Buildsmart review report will be auto mapped.")
 
         col1, col2 = st.columns(2)
         with col1:
@@ -5668,7 +5891,10 @@ def render_jct_reconciliation_tool():
             if user_file_p2:
                 try:
                     st.session_state.user_df_p2 = read_any(user_file_p2)
-                    st.success(f"Loaded User List: `{user_file_p2.name}` • Shape {st.session_state.user_df_p2.shape}")
+                    if len(st.session_state.user_df_p2) == 0:
+                        st.warning(f"`{user_file_p2.name}` was loaded but contains **0 rows**. Please check the file.")
+                    else:
+                        st.success(f"Loaded User List: `{user_file_p2.name}` • Shape {st.session_state.user_df_p2.shape}")
                     st.dataframe(st.session_state.user_df_p2.head(10), use_container_width=True, hide_index=True)
                 except Exception as e:
                     st.error(f"Failed to read User List: {e}")
@@ -5678,7 +5904,10 @@ def render_jct_reconciliation_tool():
             if wfh_file:
                 try:
                     st.session_state.wfh_df = read_any(wfh_file)
-                    st.success(f"Loaded WFH Report: `{wfh_file.name}` • Shape {st.session_state.wfh_df.shape}")
+                    if len(st.session_state.wfh_df) == 0:
+                        st.warning(f"`{wfh_file.name}` was loaded but contains **0 rows**. Please check the file.")
+                    else:
+                        st.success(f"Loaded WFH Report: `{wfh_file.name}` • Shape {st.session_state.wfh_df.shape}")
                     st.dataframe(st.session_state.wfh_df.head(10), use_container_width=True, hide_index=True)
                 except Exception as e:
                     st.error(f"Failed to read WFH Report: {e}")
@@ -5704,14 +5933,30 @@ def render_jct_reconciliation_tool():
             if not wfh_guess_role:
                 wfh_guess_role = guess_column(list(st.session_state.wfh_df.columns), ROLE_HINTS) or list(st.session_state.wfh_df.columns)[0]
 
-            st.session_state.user_sso_col_p2, st.session_state.user_role_col_p2 = build_mapping_ui(
-                st.session_state.user_df_p2, "User List Mapping", default_sso=user_guess_sso_p2, default_role=user_guess_role_p2,
-                want_role=True, key_prefix="p2_user"
-            )
-            st.session_state.wfh_sso_col, st.session_state.wfh_role_col = build_mapping_ui(
-                st.session_state.wfh_df, "WFH Report Mapping", default_sso=wfh_guess_sso, default_role=wfh_guess_role,
-                want_role=True, key_prefix="p2_wfh"
-            )
+            map_col1, map_col2 = st.columns(2)
+            with map_col1:
+                st.session_state.user_sso_col_p2, st.session_state.user_role_col_p2 = build_mapping_ui(
+                    st.session_state.user_df_p2, "User List Mapping", default_sso=user_guess_sso_p2, default_role=user_guess_role_p2,
+                    want_role=True, key_prefix="p2_user"
+                )
+            with map_col2:
+                st.session_state.wfh_sso_col, st.session_state.wfh_role_col = build_mapping_ui(
+                    st.session_state.wfh_df, "WFH Report Mapping", default_sso=wfh_guess_sso, default_role=wfh_guess_role,
+                    want_role=True, key_prefix="p2_wfh"
+                )
+
+            status_guess = guess_column(list(st.session_state.wfh_df.columns), STATUS_HINTS)
+            status_options = ["(none / not available)"] + list(st.session_state.wfh_df.columns)
+            status_default_index = status_options.index(status_guess) if status_guess in status_options else 0
+            _sc1, _sc2 = st.columns(2)
+            with _sc2:
+                status_col_choice = st.selectbox(
+                    "Select **Status** column in WFH Report (used to tag matched cases as Approved / No Action Taken / Revoked)",
+                    options=status_options,
+                    index=status_default_index,
+                    key="p2_wfh_status_select"
+                )
+            st.session_state.wfh_status_col = None if status_col_choice == "(none / not available)" else status_col_choice
 
             if st.button("▶️ Compare `SSO | Role`", type="primary", key="p2_compare"):
                 try:
@@ -5720,82 +5965,534 @@ def render_jct_reconciliation_tool():
 
                     wfh_set = set(wfh_concat.tolist())
                     missing_mask = ~user_concat.isin(wfh_set)
+                    matched_mask = ~missing_mask
+
                     missing_df = st.session_state.user_df_p2.loc[missing_mask].copy()
                     missing_df["__Concat(SSO|Role)"] = user_concat[missing_mask].values
-
                     st.session_state.p2_missing_df = missing_df
 
+                    matched_df = st.session_state.user_df_p2.loc[matched_mask].copy()
+                    matched_df["__Concat(SSO|Role)"] = user_concat[matched_mask].values
+
+                    if st.session_state.wfh_status_col:
+                        status_lookup = pd.DataFrame({
+                            "__Concat(SSO|Role)": wfh_concat.values,
+                            "Status (Raw)": st.session_state.wfh_df[st.session_state.wfh_status_col].astype(str).str.strip().values,
+                        }).drop_duplicates(subset="__Concat(SSO|Role)", keep="first")
+                        matched_df = matched_df.merge(status_lookup, on="__Concat(SSO|Role)", how="left")
+                        matched_df["Status"] = matched_df["Status (Raw)"].apply(standardize_status)
+                    else:
+                        matched_df["Status (Raw)"] = ""
+                        matched_df["Status"] = "No Action Taken"
+
+                    st.session_state.p2_matched_df = matched_df
+                    st.session_state.p2_status_counts = matched_df["Status"].value_counts().to_dict()
+
                     total_user = len(st.session_state.user_df_p2)
-                    matched = int((~missing_mask).sum())
+                    matched = int(matched_mask.sum())
                     missing = int(missing_mask.sum())
                     st.session_state.p2_counts = {"Matched": matched, "Missing": missing}
 
-                    c1, c2, c3 = st.columns(3)
+                    match_pct_p2 = (matched / total_user * 100) if total_user else 0.0
+                    c1, c2, c3, c4 = st.columns(4)
                     with c1: kpi("Rows in User List", f"{total_user:,}")
                     with c2: kpi("Rows in WFH Report", f"{len(st.session_state.wfh_df):,}")
-                    with c3: kpi("Missing after concat match", f"{missing:,}")
+                    with c3: kpi("Missing", f"{missing:,}")
+                    with c4: kpi("Match Rate", f"{match_pct_p2:.1f}%")
 
                     st.markdown("#### 📊 Summary (User List vs WFH)")
-                    plot_bar(["Matched", "Missing"], [matched, missing], "`SSO | Role` match results")
+                    number_row([("Matched", matched), ("Missing", missing)])
 
+                    st.markdown("---")
+
+                    # ------------------------------------------------------
+                    # NEW ORDER: the "Missing" section is shown FIRST -- before
+                    # the "Matched Cases" section below -- with its own
+                    # dedicated download button, so reviewers see outstanding
+                    # exceptions immediately rather than scrolling past the
+                    # matched/approved records first.
+                    # ------------------------------------------------------
+                    st.markdown("#### 🚫 Missing Cases (User List not found in WFH Report)")
                     if missing == 0:
                         st.success("🎉 All `SSO | Role` pairs from User List are present in WFH Report.")
-                        st.balloons()
                     else:
-                        st.warning("Some `SSO | Role` pairs from User List were **not found** in WFH Report.")
+                        st.warning(f"{missing:,} `SSO | Role` pair(s) from User List were **not found** in WFH Report.")
                         st.dataframe(missing_df, use_container_width=True, hide_index=True)
+                        st.download_button(
+                            "⬇️ Download Missing Cases (Excel)",
+                            data=to_excel_download(
+                                missing_df.drop(columns=["__Concat(SSO|Role)"], errors="ignore"),
+                                "Missing_Cases"
+                            ),
+                            file_name=f"Missing_Cases_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="p2_dl_missing",
+                        )
                         st.toast("User List vs WFH comparison complete.", icon="✅")
+
+                    st.markdown("---")
+
+                    status_counts = st.session_state.p2_status_counts or {}
+                    approved_n = int(status_counts.get("Approved", 0))
+                    no_action_n = int(status_counts.get("No Action Taken", 0))
+                    revoked_n = int(status_counts.get("Revoked", 0))
+
+                    if matched > 0:
+                        st.markdown("#### 🧾 Matched Cases — Status Breakdown")
+                        s1, s2, s3 = st.columns(3)
+                        with s1: kpi("Approved", f"{approved_n:,}")
+                        with s2: kpi("No Action Taken", f"{no_action_n:,}")
+                        with s3: kpi("Revoked", f"{revoked_n:,}")
+                       # number_row([("Approved", approved_n), ("No Action Taken", no_action_n), ("Revoked", revoked_n)])
+
+                    if matched > 0 and st.session_state.p2_matched_df is not None:
+                        st.markdown("#### ✅ Matched Cases (User List ∩ WFH Report) — with Status")
+                        if not st.session_state.wfh_status_col:
+                            st.caption("⚠️ No Status column was selected/found in the WFH Report, so all matched cases default to **No Action Taken**. Pick the correct column above and re-run the comparison to tag Approved / Revoked cases correctly.")
+                        st.dataframe(st.session_state.p2_matched_df, use_container_width=True, hide_index=True)
+                        st.download_button(
+                            "⬇️ Download Matched Cases with Status (Excel)",
+                            data=to_excel_download(
+                                st.session_state.p2_matched_df.drop(columns=["__Concat(SSO|Role)"], errors="ignore"),
+                                "Matched_Cases_Status"
+                            ),
+                            file_name=f"Matched_Cases_Status_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="p2_dl_matched",
+                        )
                 except KeyError as e:
                     st.error(f"Selected column not found: {e}")
 
-    # ========== TAB 3: Exceptions Report (from Step 2) ==========
+    # ========== TEST 3: Defects Follow-up (Next Month) ==========
     with tab3:
-        st.markdown("### 📦 Page 3: Exceptions & Exports")
-        if st.session_state.p2_missing_df is None and st.session_state.jct_missing_df is None:
-            st.info("Run **Page 1** and/or **Page 2** comparisons to populate reports.")
+        st.markdown("### 📦 Test 3: Action Taken on Identified Defects")
+        st.markdown(
+            "Combines **Not Found in WFH**, **Revoked**, and **No Action Taken** cases from Test 2 into one "
+            "**Defects** list, then checks whether each `SSO | Role` pair is still present in the "
+            "**Updated User List** you upload below."
+        )
+
+        _defect_frames = []
+        if st.session_state.p2_missing_df is not None and len(st.session_state.p2_missing_df) > 0:
+            _d_missing = st.session_state.p2_missing_df.copy()
+            _d_missing["Defect_Type"] = "Not Found in WFH"
+            _defect_frames.append(_d_missing)
+        if st.session_state.p2_matched_df is not None and len(st.session_state.p2_matched_df) > 0:
+            _d_matched = st.session_state.p2_matched_df.copy()
+            _d_matched = _d_matched[_d_matched["Status"].isin(["Revoked", "No Action Taken"])].copy()
+            if len(_d_matched) > 0:
+                _d_matched["Defect_Type"] = _d_matched["Status"]
+                _defect_frames.append(_d_matched)
+
+        defects_df = None
+        if not _defect_frames:
+            st.info("No defects (Not Found / Revoked / No Action Taken) available yet. Run **Test 2** comparison first to populate the Defects list below.")
         else:
-            if st.session_state.p2_missing_df is not None:
-                final_df = st.session_state.p2_missing_df.drop(columns=["__Concat(SSO|Role)"], errors="ignore").copy()
-                if len(final_df) == 0:
-                    st.success("🎉 No exceptions remain from Step 2.")
-                    st.balloons()
+            defects_df = pd.concat(_defect_frames, ignore_index=True, sort=False)
+            st.session_state.p2_defects_df = defects_df
+
+            d1, d2, d3 = st.columns(3)
+            with d1: kpi("Total Defects", f"{len(defects_df):,}")
+            with d2: kpi("Revoked", f"{int((defects_df['Defect_Type'] == 'Revoked').sum()):,}")
+            with d3: kpi("No Action Taken", f"{int((defects_df['Defect_Type'] == 'No Action Taken').sum()):,}")
+            st.caption(f"Plus **{int((defects_df['Defect_Type'] == 'Not Found in WFH').sum()):,}** 'Not Found in WFH' defects included above in the Total.")
+
+            _defect_col_options = [c for c in defects_df.columns if c not in ("__Concat(SSO|Role)", "Status (Raw)")]
+            _defect_cols_default = [c for c in st.session_state.get("defects_display_cols", _defect_col_options) if c in _defect_col_options] or _defect_col_options
+            st.session_state.defects_display_cols = st.multiselect(
+                "Select column(s) to display/include for the Defects list (optional)",
+                options=_defect_col_options,
+                default=_defect_cols_default,
+                key="p2_defects_cols_select"
+            )
+            st.caption("Tip: These same columns will also be used in the Test 3 results table and download below.")
+
+            _defects_display_cols_safe = st.session_state.defects_display_cols or _defect_col_options
+            st.dataframe(
+                defects_df[_defects_display_cols_safe],
+                use_container_width=True, hide_index=True
+            )
+
+        st.markdown("---")
+
+        st.markdown("#### 📤 Upload Updated User List")
+        next_user_file = st.file_uploader(
+            "👤 Updated User List (CSV/XLSX)", type=["csv", "xlsx", "xls"], key="p2_next_user_file"
+        )
+        if next_user_file:
+            try:
+                st.session_state.next_user_df = read_any(next_user_file)
+                if len(st.session_state.next_user_df) == 0:
+                    st.warning(f"`{next_user_file.name}` was loaded but contains **0 rows**. Please check the file.")
                 else:
-                    st.warning(f"{len(final_df):,} exceptions remain from Step 2. Download the report below.")
-                    st.dataframe(final_df, use_container_width=True, hide_index=True)
-                    st.download_button(
-                        "⬇️ Download Exceptions (Excel)",
-                        data=to_excel_download(final_df, "Exceptions_Step2"),
-                        file_name=f"Exceptions_Step2_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    st.success(f"Loaded Updated User List: `{next_user_file.name}` • Shape {st.session_state.next_user_df.shape}")
+                st.dataframe(st.session_state.next_user_df.head(10), use_container_width=True, hide_index=True)
+            except Exception as e:
+                st.error(f"Failed to read Updated User List: {e}")
+                st.stop()
+
+        if st.session_state.next_user_df is not None:
+            next_guess_sso = guess_column(list(st.session_state.next_user_df.columns), SSO_HINTS) or list(st.session_state.next_user_df.columns)[0]
+            next_guess_role = guess_column(list(st.session_state.next_user_df.columns), ROLE_HINTS) or list(st.session_state.next_user_df.columns)[0]
+
+            st.session_state.next_user_sso_col, st.session_state.next_user_role_col = build_mapping_ui(
+                st.session_state.next_user_df, "Updated User List Mapping",
+                default_sso=next_guess_sso, default_role=next_guess_role,
+                want_role=True, key_prefix="p2_next"
+            )
+
+            _extra_col_options = [
+                c for c in st.session_state.next_user_df.columns
+                if c not in (st.session_state.next_user_sso_col, st.session_state.next_user_role_col)
+            ]
+            st.session_state.next_user_extra_cols = st.multiselect(
+                "Select additional column(s) from the Updated User List to include in the Test 3 report (optional)",
+                options=_extra_col_options,
+                default=st.session_state.get("next_user_extra_cols", []),
+                key="p2_next_extra_cols_select"
+            )
+            st.caption("Tip: These extra columns (if any) will be merged onto the matching defect rows in the Test 3 download, using `SSO | Role` as the join key.")
+
+            run_check3_disabled = defects_df is None
+            if run_check3_disabled:
+                st.caption("⚠️ Run **Test 2** comparison first to populate the Defects list before running Test 3.")
+
+            if st.button("▶️ Run Test 3: Compare Defects vs Updated User List", type="primary", key="p2_check3_compare", disabled=run_check3_disabled):
+                try:
+                    next_concat = concat_fields(
+                        st.session_state.next_user_df, st.session_state.next_user_sso_col, st.session_state.next_user_role_col
                     )
-            else:
-                st.info("No Step 2 exceptions yet.")
+                    next_set = set(next_concat.tolist())
+
+                    _defects_cols_for_check = st.session_state.get("defects_display_cols") or [
+                        c for c in defects_df.columns if c not in ("__Concat(SSO|Role)", "Status (Raw)")
+                    ]
+                    _defects_cols_for_check = [c for c in _defects_cols_for_check if c in defects_df.columns]
+                    if "__Concat(SSO|Role)" not in _defects_cols_for_check:
+                        _defects_cols_for_check = _defects_cols_for_check + ["__Concat(SSO|Role)"]
+                    check_df = defects_df[_defects_cols_for_check].copy()
+
+                    check_df["Found_in_Next_Month_List"] = check_df["__Concat(SSO|Role)"].isin(next_set)
+                    check_df["Next_Month_Check_Result"] = check_df["Found_in_Next_Month_List"].map({
+                        True: "⚠️ Still Present (Access Not Removed)",
+                        False: "✅ Removed"
+                    })
+                    check_df = check_df.drop(columns=["Found_in_Next_Month_List"])
+
+                    if st.session_state.next_user_extra_cols:
+                        extra_lookup = st.session_state.next_user_df[
+                            [st.session_state.next_user_sso_col, st.session_state.next_user_role_col] + st.session_state.next_user_extra_cols
+                        ].copy()
+                        extra_lookup["__Concat(SSO|Role)"] = next_concat.values
+                        extra_lookup = extra_lookup.drop(
+                            columns=[st.session_state.next_user_sso_col, st.session_state.next_user_role_col]
+                        ).drop_duplicates(subset="__Concat(SSO|Role)", keep="first")
+                        check_df = check_df.merge(extra_lookup, on="__Concat(SSO|Role)", how="left")
+
+                    st.session_state.p2_defects_check_df = check_df
+                    st.session_state.p2_defects_check_counts = check_df["Next_Month_Check_Result"].value_counts().to_dict()
+                except KeyError as e:
+                    st.error(f"Selected column not found: {e}")
+
+            if st.session_state.p2_defects_check_df is not None:
+                check_df = st.session_state.p2_defects_check_df
+                counts = st.session_state.p2_defects_check_counts or {}
+                still_present_n = int(counts.get("⚠️ Still Present (Access Not Removed)", 0))
+                removed_n = int(counts.get("✅ Removed", 0))
+                _total_checked = still_present_n + removed_n
+                _removed_pct = (removed_n / _total_checked * 100) if _total_checked else 0.0
+
+                e1, e2, e3, e4 = st.columns(4)
+                with e1: kpi("Total Defects Checked", f"{len(check_df):,}")
+                with e2: kpi("Not Removed", f"{still_present_n:,}")
+                with e3: kpi("Removed", f"{removed_n:,}")
+                with e4: kpi("Remediation Rate", f"{_removed_pct:.1f}%")
+
+                st.markdown("#### 📊 Summary — Defects vs Updated User List")
+                number_row([("Not Removed", still_present_n), ("Removed", removed_n)])
+
+                if still_present_n == 0:
+                    st.success("🎉 All Revoked / No Action Taken / Not Found defects have been removed from the Updated User List.")
+                else:
+                    st.warning(f"{still_present_n:,} defect(s) are **still present** in the Updated User List (access appears not to have been removed).")
+
+                st.dataframe(
+                    check_df.drop(columns=["Status (Raw)"], errors="ignore"),
+                    use_container_width=True, hide_index=True
+                )
+                st.download_button(
+                    "⬇️ Download Test 3 — Defects vs Updated User List (Excel)",
+                    data=to_excel_download(
+                        check_df.drop(columns=["__Concat(SSO|Role)", "Status (Raw)"], errors="ignore"),
+                        "Test3_Defects_NextMonth"
+                    ),
+                    file_name=f"Test3_Defects_NextMonth_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="p2_dl_check3",
+                )
+
+    # ========== TEST 4: Exceptions Report & Exports ==========
+    with tab4:
+        st.markdown("### 📦 Test 4 — Exceptions Reports")
+        st.caption(
+            "This page consolidates every exception identified across Test 1, Test 2, and Test 3 "
+            "into individual, ready-to-share reports -- plus a single consolidated Master Workbook "
+            "for a complete audit trail in one file."
+        )
+
+        _any_results = any([
+            st.session_state.jct_missing_df is not None,
+            st.session_state.p2_missing_df is not None,
+            st.session_state.p2_defects_check_df is not None,
+        ])
+
+        if not _any_results:
+            st.info("ℹ️ No results yet. Run **Test 1**, **Test 2**, and/or **Test 3** first to populate the exception reports on this page.")
+        else:
+            # -----------------------------------------------------------
+            # High-level KPI overview across all 3 tests (numbers only,
+            # no charts/graphs -- consistent with the rest of this tool).
+            # -----------------------------------------------------------
+            _t1_exceptions = len(st.session_state.jct_missing_df) if st.session_state.jct_missing_df is not None else 0
+            _t2_exceptions = len(st.session_state.p2_missing_df) if st.session_state.p2_missing_df is not None else 0
+            _t3_exceptions = 0
+            if st.session_state.p2_defects_check_df is not None:
+                _counts = st.session_state.p2_defects_check_counts or {}
+                _t3_exceptions = int(_counts.get("⚠️ Still Present (Access Not Removed)", 0))
+            _total_exceptions = _t1_exceptions + _t2_exceptions + _t3_exceptions
+
+            st.markdown("#### 📊 Exceptions Overview")
+            ov1, ov2, ov3, ov4 = st.columns(4)
+            with ov1: kpi("Test 1 Exceptions", f"{_t1_exceptions:,}")
+            with ov2: kpi("Test 2 Exceptions", f"{_t2_exceptions:,}")
+            with ov3: kpi("Test 3 Exceptions", f"{_t3_exceptions:,}")
+            with ov4: kpi("Total Exceptions", f"{_total_exceptions:,}")
 
             st.markdown("---")
-            st.markdown("#### 📦 One-click Export: All Available Reports (ZIP)")
-            files = []
-            if st.session_state.jct_missing_df is not None and len(st.session_state.jct_missing_df) > 0:
-                p1_bytes = to_excel_download(st.session_state.jct_missing_df, "JCT_SSO_Not_Found")
-                files.append(("JCT_SSO_Not_Found.xlsx", p1_bytes))
-            if st.session_state.p2_missing_df is not None:
-                p2_final = st.session_state.p2_missing_df.drop(columns=["__Concat(SSO|Role)"], errors="ignore").copy()
-                p2_bytes = to_excel_download(p2_final, "Exceptions_Step2")
-                files.append(("Exceptions_Step2.xlsx", p2_bytes))
 
-            if len(files) == 0:
-                st.info("No reports to include in ZIP yet. Generate results in Page 1 / Page 2.")
+            # =============================================================
+            # TEST 1 EXCEPTIONS — JCT SSO/Role not found in User List
+            # =============================================================
+            st.markdown("### 1️⃣ Test 1 Exceptions — JCT Not Found in User List")
+            if st.session_state.jct_missing_df is None:
+                st.caption("⚠️ Run **Test 1** first to generate this report.")
             else:
-                zip_buf = io.BytesIO()
-                with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                    for fname, fbytes in files:
-                        zf.writestr(fname, fbytes)
-                zip_buf.seek(0)
+                _t1_df = st.session_state.jct_missing_df.drop(columns=["__Concat(SSO|Role)"], errors="ignore").copy()
+                if len(_t1_df) == 0:
+                    st.success("🎉 No exceptions -- all JCT records were found in the User List.")
+                else:
+                    st.warning(f"**{len(_t1_df):,}** exception(s) found: JCT record(s) not present in the User List.")
+                    with st.expander(f"📄 Preview Test 1 Exceptions ({len(_t1_df):,} rows)", expanded=False):
+                        st.dataframe(_t1_df, use_container_width=True, hide_index=True)
+                    st.download_button(
+                        "⬇️ Download Test 1 Exceptions Report (Excel)",
+                        data=to_excel_download(_t1_df, "Test1_Exceptions"),
+                        file_name=f"Test1_Exceptions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="p_dl_test1_exceptions",
+                    )
+
+            st.markdown("---")
+
+            # =============================================================
+            # TEST 2 EXCEPTIONS — User List not found in WFH Report
+            # =============================================================
+            st.markdown("### 2️⃣ Test 2 Exceptions — User List Not Found in WFH Report")
+            if st.session_state.p2_missing_df is None:
+                st.caption("⚠️ Run **Test 2** first to generate this report.")
+            else:
+                _t2_df = st.session_state.p2_missing_df.drop(columns=["__Concat(SSO|Role)"], errors="ignore").copy()
+                if len(_t2_df) == 0:
+                    st.success("🎉 No exceptions -- all User List records were found in the WFH Report.")
+                else:
+                    st.warning(f"**{len(_t2_df):,}** exception(s) found: User List record(s) not present in the WFH Report.")
+                    with st.expander(f"📄 Preview Test 2 Exceptions ({len(_t2_df):,} rows)", expanded=False):
+                        st.dataframe(_t2_df, use_container_width=True, hide_index=True)
+                    st.download_button(
+                        "⬇️ Download Test 2 Exceptions Report (Excel)",
+                        data=to_excel_download(_t2_df, "Test2_Exceptions"),
+                        file_name=f"Test2_Exceptions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="p_dl_test2_exceptions",
+                    )
+
+            st.markdown("---")
+
+            # =============================================================
+            # TEST 3 EXCEPTIONS — Defects still present in Updated User List
+            # =============================================================
+            st.markdown("### 3️⃣ Test 3 Exceptions — Defects Still Present in Updated User List")
+            if st.session_state.p2_defects_check_df is None:
+                st.caption("⚠️ Run **Test 3** first to generate this report.")
+            else:
+                _t3_full = st.session_state.p2_defects_check_df.copy()
+                _t3_df = _t3_full[_t3_full["Next_Month_Check_Result"] == "⚠️ Still Present (Access Not Removed)"].copy()
+                _t3_df = _t3_df.drop(columns=["__Concat(SSO|Role)", "Status (Raw)"], errors="ignore")
+                if len(_t3_df) == 0:
+                    st.success("🎉 No exceptions -- all defects were remediated/removed by next month.")
+                else:
+                    st.warning(f"**{len(_t3_df):,}** exception(s) found: defect(s) still present in Updated User List (access not removed).")
+                    with st.expander(f"📄 Preview Test 3 Exceptions ({len(_t3_df):,} rows)", expanded=False):
+                        st.dataframe(_t3_df, use_container_width=True, hide_index=True)
+                    st.download_button(
+                        "⬇️ Download Test 3 Exceptions Report (Excel)",
+                        data=to_excel_download(_t3_df, "Test3_Exceptions"),
+                        file_name=f"Test3_Exceptions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="p_dl_test3_exceptions",
+                    )
+
+            st.markdown("---")
+
+            # =============================================================
+            # ONE-CLICK: All Individual Reports (ZIP) -- every result sheet
+            # generated so far (found/matched/exceptions across all tests),
+            # bundled as separate Excel files inside a single ZIP archive.
+            # =============================================================
+            st.markdown("### 📦 One-click Export: All Reports (Individual Files, ZIP)")
+            st.caption("Bundles every available report below as **separate Excel files** inside one ZIP -- useful when reports need to be shared or filed individually.")
+
+            _zip_files = []
+            if st.session_state.jct_missing_df is not None and len(st.session_state.jct_missing_df) > 0:
+                _zip_files.append(("Test1_Exceptions.xlsx", to_excel_download(
+                    st.session_state.jct_missing_df.drop(columns=["__Concat(SSO|Role)"], errors="ignore"), "Test1_Exceptions"
+                )))
+            if st.session_state.p1_found_df is not None and len(st.session_state.p1_found_df) > 0:
+                _zip_files.append(("Test1_Found_with_Roles.xlsx", to_excel_download(
+                    st.session_state.p1_found_df, "Test1_Found"
+                )))
+            if st.session_state.p2_missing_df is not None and len(st.session_state.p2_missing_df) > 0:
+                _zip_files.append(("Test2_Exceptions.xlsx", to_excel_download(
+                    st.session_state.p2_missing_df.drop(columns=["__Concat(SSO|Role)"], errors="ignore"), "Test2_Exceptions"
+                )))
+            if st.session_state.p2_matched_df is not None and len(st.session_state.p2_matched_df) > 0:
+                _zip_files.append(("Test2_Matched_with_Status.xlsx", to_excel_download(
+                    st.session_state.p2_matched_df.drop(columns=["__Concat(SSO|Role)"], errors="ignore"), "Test2_Matched"
+                )))
+            if st.session_state.p2_defects_check_df is not None:
+                _t3_excep_only = st.session_state.p2_defects_check_df[
+                    st.session_state.p2_defects_check_df["Next_Month_Check_Result"] == "⚠️ Still Present (Access Not Removed)"
+                ].drop(columns=["__Concat(SSO|Role)", "Status (Raw)"], errors="ignore")
+                if len(_t3_excep_only) > 0:
+                    _zip_files.append(("Test3_Exceptions.xlsx", to_excel_download(_t3_excep_only, "Test3_Exceptions")))
+                _zip_files.append(("Test3_Full_Results.xlsx", to_excel_download(
+                    st.session_state.p2_defects_check_df.drop(columns=["__Concat(SSO|Role)", "Status (Raw)"], errors="ignore"),
+                    "Test3_Full_Results"
+                )))
+
+            if len(_zip_files) == 0:
+                st.info("No reports available yet to bundle. Run at least one test above first.")
+            else:
+                _zip_buf = io.BytesIO()
+                with zipfile.ZipFile(_zip_buf, "w", zipfile.ZIP_DEFLATED) as _zf:
+                    for _fname, _fbytes in _zip_files:
+                        _zf.writestr(_fname, _fbytes)
+                _zip_buf.seek(0)
+                st.caption(f"Includes {len(_zip_files)} file(s): {', '.join(name for name, _ in _zip_files)}")
                 st.download_button(
                     "⬇️ Export All Reports (ZIP)",
-                    data=zip_buf.getvalue(),
-                    file_name=f"Access_Recon_Reports_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+                    data=_zip_buf.getvalue(),
+                    file_name=f"JCT_All_Reports_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
                     mime="application/zip",
+                    key="p_dl_all_reports_zip",
                 )
+
+            st.markdown("---")
+
+            # =============================================================
+            # ONE-CLICK: MASTER WORKBOOK -- a single, professionally
+            # formatted multi-sheet Excel file combining every available
+            # result (found/matched/exceptions) across Test 1, 2 and 3.
+            # =============================================================
+            st.markdown("### 📘 One-click Export: Master Workbook (All Tests, Multi-Sheet Excel)")
+            st.caption("A single polished workbook with one sheet per result set -- the recommended file to share with auditors/reviewers for a complete, end-to-end record.")
+
+            _master_sheets = {}
+            if st.session_state.jct_missing_df is not None and len(st.session_state.jct_missing_df) > 0:
+                _master_sheets["Test1_Exceptions"] = st.session_state.jct_missing_df.drop(columns=["__Concat(SSO|Role)"], errors="ignore")
+            if st.session_state.p1_found_df is not None and len(st.session_state.p1_found_df) > 0:
+                _master_sheets["Test1_Found_with_Roles"] = st.session_state.p1_found_df
+            if st.session_state.p2_missing_df is not None:
+                _master_sheets["Test2_Exceptions"] = st.session_state.p2_missing_df.drop(columns=["__Concat(SSO|Role)"], errors="ignore")
+            if st.session_state.p2_matched_df is not None:
+                _master_sheets["Test2_Matched_Status"] = st.session_state.p2_matched_df.drop(columns=["__Concat(SSO|Role)"], errors="ignore")
+            if st.session_state.p2_defects_check_df is not None:
+                _master_sheets["Test3_Full_Results"] = st.session_state.p2_defects_check_df.drop(columns=["__Concat(SSO|Role)", "Status (Raw)"], errors="ignore")
+                _t3_excep_master = st.session_state.p2_defects_check_df[
+                    st.session_state.p2_defects_check_df["Next_Month_Check_Result"] == "⚠️ Still Present (Access Not Removed)"
+                ].drop(columns=["__Concat(SSO|Role)", "Status (Raw)"], errors="ignore")
+                if len(_t3_excep_master) > 0:
+                    _master_sheets["Test3_Exceptions"] = _t3_excep_master
+
+            if not _master_sheets:
+                st.info("No results available yet across any test. Run at least one comparison to enable the Master Workbook export.")
+            else:
+                _master_buf = io.BytesIO()
+                with pd.ExcelWriter(_master_buf, engine="xlsxwriter") as _writer:
+                    _wb = _writer.book
+                    _header_fmt = _wb.add_format({
+                        "bold": True, "font_color": "#FFFFFF", "bg_color": "#1e40af",
+                        "border": 1, "valign": "vcenter", "align": "center", "text_wrap": True,
+                    })
+
+                    # ---- Cover / Summary sheet, added first for a professional feel ----
+                    _cover_rows = [
+                        ["Report", "Access Reconciliation Suite — Master Workbook"],
+                        ["Generated On", datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
+                        ["", ""],
+                        ["Test", "Exceptions Count"],
+                        ["Test 1 — JCT vs User List", _t1_exceptions],
+                        ["Test 2 — User List vs WFH", _t2_exceptions],
+                        ["Test 3 — Defects Follow-up", _t3_exceptions],
+                        ["Total Exceptions", _total_exceptions],
+                    ]
+                    _cover_df = pd.DataFrame(_cover_rows)
+                    _cover_df.to_excel(_writer, index=False, header=False, sheet_name="Summary")
+                    _cover_ws = _writer.sheets["Summary"]
+                    _title_fmt = _wb.add_format({"bold": True, "font_size": 14, "font_color": "#1e40af"})
+                    _label_fmt = _wb.add_format({"bold": True, "bg_color": "#f1f5f9"})
+                    _cover_ws.write(0, 0, "Access Reconciliation Suite — Master Workbook", _title_fmt)
+                    _cover_ws.write(1, 0, "Generated On", _label_fmt)
+                    for _r in (3, 4, 5, 6, 7):
+                        _cover_ws.write(_r, 0, _cover_rows[_r][0], _label_fmt)
+                    _cover_ws.set_column(0, 0, 32)
+                    _cover_ws.set_column(1, 1, 26)
+
+                    for _sheet_name, _sheet_df in _master_sheets.items():
+                        _safe_name = _sheet_name[:31]
+                        _sheet_df.to_excel(_writer, index=False, sheet_name=_safe_name)
+                        _ws = _writer.sheets[_safe_name]
+                        for _i, _col in enumerate(_sheet_df.columns):
+                            _ws.write(0, _i, _col, _header_fmt)
+                            try:
+                                _max_len = max(_sheet_df[_col].astype(str).map(len).max(), len(str(_col))) + 2
+                            except Exception:
+                                _max_len = len(str(_col)) + 2
+                            _ws.set_column(_i, _i, min(_max_len, 60))
+                        if len(_sheet_df) > 0:
+                            _ws.autofilter(0, 0, len(_sheet_df), max(len(_sheet_df.columns) - 1, 0))
+                        _ws.freeze_panes(1, 0)
+                        _ws.set_row(0, 22)
+                _master_buf.seek(0)
+
+                st.caption(f"Includes **Summary** sheet + {len(_master_sheets)} data sheet(s): {', '.join(_master_sheets.keys())}")
+                st.download_button(
+                    "⬇️ Download Master Workbook (All Tests, Excel)",
+                    data=_master_buf.getvalue(),
+                    file_name=f"JCT_Master_Reconciliation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="p_dl_master_workbook",
+                )
+# ============================================================================
+# SECTION 8D — HIGHLY PRIVILEGED ACCESS TOOL
+# ============================================================================
+
+def render_hpa_tool():
+    """Highly Privileged Access tool — used to get the designations of users."""
+    st.markdown("### 👤 Highly Privileged Access")
+    st.caption("Get the designations of users.")
+    st.info("This tool retrieves the designations of users with highly privileged access.")
+
 
 # ============================================================================
 # SECTION 9 — MAIN APP
