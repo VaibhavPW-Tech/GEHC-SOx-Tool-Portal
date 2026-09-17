@@ -6089,6 +6089,38 @@ def render_jct_reconciliation_tool():
             st.info("No defects (Not Found / Revoked / No Action Taken) available yet. Run **Test 2** comparison first to populate the Defects list below.")
         else:
             defects_df = pd.concat(_defect_frames, ignore_index=True, sort=False)
+
+            # ------------------------------------------------------------
+            # NEW: Let the user pick which column in the combined Defects
+            # list represents the SSO / User ID and which represents the
+            # Role / Entitlement -- using the exact same selectbox-style
+            # mapping UI ("build_mapping_ui") used for the Updated User
+            # List mapping further below. This lets the `SSO | Role` key
+            # used for the Test 3 comparison be re-derived/overridden
+            # directly from the combined Defects list if needed.
+            # ------------------------------------------------------------
+            _defects_map_col_options = [c for c in defects_df.columns if c not in ("__Concat(SSO|Role)", "Status (Raw)")]
+            _defects_guess_sso = (
+                st.session_state.get("user_sso_col_p2")
+                if st.session_state.get("user_sso_col_p2") in _defects_map_col_options
+                else (guess_column(_defects_map_col_options, SSO_HINTS) or _defects_map_col_options[0])
+            )
+            _defects_guess_role = (
+                st.session_state.get("user_role_col_p2")
+                if st.session_state.get("user_role_col_p2") in _defects_map_col_options
+                else (guess_column(_defects_map_col_options, ROLE_HINTS) or _defects_map_col_options[0])
+            )
+            st.session_state.defects_sso_col, st.session_state.defects_role_col = build_mapping_ui(
+                defects_df[_defects_map_col_options], "Defects List Mapping",
+                default_sso=_defects_guess_sso, default_role=_defects_guess_role,
+                want_role=True, key_prefix="p2_defects"
+            )
+            # Recompute the `SSO | Role` concat key from the columns picked
+            # above so the Test 3 comparison below always reflects the
+            # current selection made for the combined Defects list.
+            defects_df["__Concat(SSO|Role)"] = concat_fields(
+                defects_df, st.session_state.defects_sso_col, st.session_state.defects_role_col
+            )
             st.session_state.p2_defects_df = defects_df
 
             d1, d2, d3 = st.columns(3)
