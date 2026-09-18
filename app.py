@@ -5798,7 +5798,7 @@ def render_jct_reconciliation_tool():
         if st.button("🔄 Reset All Data", key="jct_reset_all", help="Clears every uploaded file, mapping, and result across all 4 steps so you can start a fresh reconciliation run."):
             for _k in list(ss_defaults.keys()):
                 st.session_state[_k] = ss_defaults[_k]
-            for _wkey in ["p1_use_role_match", "p2_wfh_status_select", "p2_defects_cols_select", "p2_next_extra_cols_select"]:
+            for _wkey in ["p2_wfh_status_select", "p2_defects_cols_select", "p2_next_extra_cols_select"]:
                 st.session_state.pop(_wkey, None)
             st.toast("All JCT data has been reset. Start fresh from Step ①.", icon="🔄")
             st.rerun()
@@ -5818,7 +5818,7 @@ def render_jct_reconciliation_tool():
     # ========== TEST 1: JCT vs User List (SSO exist?) ==========
     with tab1:
         st.markdown("### 🧪 Test 1: JCT SSO Presence in User List")
-        st.markdown("Upload **JCT Report** and **User List**. We’ll auto-map **SSO** (and **Role/Entitlement**, if available) for each file and compare using the same `SSO | Role` concatenation method as Test 2 whenever a Role column is available on both sides -- otherwise we automatically fall back to matching on **SSO only** (JCT Reports commonly don't include a Role column). We also let you download the **Found with Roles** report.")
+        st.markdown("Upload **JCT Report** and **User List**. We’ll auto-map **SSO** for the JCT Report and **SSO / Role/Entitlement** for the User List, then check whether each JCT SSO exists in the User List (SSO-only match). We also let you download the **Found with Roles** report.")
 
         colA, colB = st.columns(2)
         with colA:
@@ -5857,19 +5857,12 @@ def render_jct_reconciliation_tool():
             user_guess_sso_p1 = guess_column(list(st.session_state.user_df_p1.columns), SSO_HINTS) or list(st.session_state.user_df_p1.columns)[0]
             user_guess_role_p1 = guess_column(list(st.session_state.user_df_p1.columns), ROLE_HINTS) or list(st.session_state.user_df_p1.columns)[0]
 
-            use_role_match_p1 = st.checkbox(
-                "Also match on Role/Entitlement (uses `SSO | Role` concat, same as Test 2) — "
-                "leave unchecked if the JCT Report has no Role column (SSO-only match)",
-                value=bool(jct_guess_role),
-                key="p1_use_role_match"
-            )
-
             p1_map_col1, p1_map_col2 = st.columns(2)
             with p1_map_col1:
-                jct_sso_col, jct_role_col = build_mapping_ui(
+                jct_sso_col, _jct_role_col_unused = build_mapping_ui(
                     st.session_state.jct_df, "JCT Report Mapping",
                     default_sso=jct_guess_sso, default_role=jct_guess_role or list(st.session_state.jct_df.columns)[0],
-                    want_role=use_role_match_p1, key_prefix="p1"
+                    want_role=False, key_prefix="p1"
                 )
             with p1_map_col2:
                 st.session_state.user_sso_col_p1, st.session_state.user_role_col_p1 = build_mapping_ui(
@@ -5878,44 +5871,27 @@ def render_jct_reconciliation_tool():
                     want_role=True, key_prefix="p1_user"
                 )
 
-            button_label = "▶️ Run Test 1: Compare JCT `SSO | Role` in User List" if use_role_match_p1 else "▶️ Run Test 1: Compare JCT SSO in User List"
+            button_label = "▶️ Run Test 1: Compare JCT SSO in User List"
             if st.button(button_label, type="primary", key="p1_compare"):
                 try:
-                    if use_role_match_p1:
-                        jct_concat = concat_fields(st.session_state.jct_df, jct_sso_col, jct_role_col)
-                        user_concat_p1 = concat_fields(st.session_state.user_df_p1, st.session_state.user_sso_col_p1, st.session_state.user_role_col_p1)
-                        user_set_p1 = set(user_concat_p1.tolist())
+                    jct_sso = st.session_state.jct_df[jct_sso_col].astype(str).str.strip()
+                    user_sso_norm = st.session_state.user_df_p1[st.session_state.user_sso_col_p1].astype(str).str.strip()
+                    user_role_norm = st.session_state.user_df_p1[st.session_state.user_role_col_p1].astype(str).str.strip()
 
-                        not_found_mask = ~jct_concat.isin(user_set_p1)
-                        missing_df = st.session_state.jct_df.loc[not_found_mask].copy()
-                        missing_df["__Concat(SSO|Role)"] = jct_concat[not_found_mask].values
-                        st.session_state.jct_missing_df = missing_df
+                    user_lookup = pd.DataFrame({"SSO": user_sso_norm, "Role": user_role_norm})
+                    user_ssos = set(user_lookup["SSO"].tolist())
 
-                        found_mask = ~not_found_mask
-                        found_with_roles = pd.DataFrame({
-                            "SSO": st.session_state.jct_df.loc[found_mask, jct_sso_col].astype(str).str.strip().values,
-                            "Role": st.session_state.jct_df.loc[found_mask, jct_role_col].astype(str).str.strip().values,
-                        }).drop_duplicates().reset_index(drop=True)
-                        st.session_state.p1_found_df = found_with_roles
-                    else:
-                        jct_sso = st.session_state.jct_df[jct_sso_col].astype(str).str.strip()
-                        user_sso_norm = st.session_state.user_df_p1[st.session_state.user_sso_col_p1].astype(str).str.strip()
-                        user_role_norm = st.session_state.user_df_p1[st.session_state.user_role_col_p1].astype(str).str.strip()
+                    not_found_mask = ~jct_sso.isin(user_ssos)
+                    missing_df = st.session_state.jct_df.loc[not_found_mask].copy()
+                    missing_df["__SSO_Selected"] = jct_sso[not_found_mask].values
+                    st.session_state.jct_missing_df = missing_df
 
-                        user_lookup = pd.DataFrame({"SSO": user_sso_norm, "Role": user_role_norm})
-                        user_ssos = set(user_lookup["SSO"].tolist())
+                    found_ssos = set(jct_sso[~not_found_mask].tolist())
+                    found_with_roles = user_lookup[user_lookup["SSO"].isin(found_ssos)].copy()
+                    found_with_roles = found_with_roles.drop_duplicates().reset_index(drop=True)
+                    st.session_state.p1_found_df = found_with_roles
 
-                        not_found_mask = ~jct_sso.isin(user_ssos)
-                        missing_df = st.session_state.jct_df.loc[not_found_mask].copy()
-                        missing_df["__SSO_Selected"] = jct_sso[not_found_mask].values
-                        st.session_state.jct_missing_df = missing_df
-
-                        found_ssos = set(jct_sso[~not_found_mask].tolist())
-                        found_with_roles = user_lookup[user_lookup["SSO"].isin(found_ssos)].copy()
-                        found_with_roles = found_with_roles.drop_duplicates().reset_index(drop=True)
-                        st.session_state.p1_found_df = found_with_roles
-
-                        found_mask = ~not_found_mask
+                    found_mask = ~not_found_mask
 
                     total_jct = len(st.session_state.jct_df)
                     found = int(found_mask.sum())
@@ -6128,7 +6104,7 @@ def render_jct_reconciliation_tool():
 
     # ========== TEST 3: Defects Follow-up (Next Month) ==========
     with tab3:
-        st.markdown("### 📦 Test 3: Action Taken on Identified Defects")
+        st.markdown("### 📦 Test 3 - Action Taken on Identified Defects")
         st.markdown(
             "Combines **Not Found in WFH**, **Revoked**, and **No Action Taken** cases from Test 2 into one "
             "**Defects** list, then checks whether each `SSO | Role` pair is still present in the "
@@ -6297,14 +6273,12 @@ def render_jct_reconciliation_tool():
                 _total_checked = still_present_n + removed_n
                 _removed_pct = (removed_n / _total_checked * 100) if _total_checked else 0.0
 
-                e1, e2, e3, e4 = st.columns(4)
-                with e1: kpi("Total Defects", f"{len(check_df):,}")
-                with e2: kpi("Not Removed", f"{still_present_n:,}")
-                with e3: kpi("Removed", f"{removed_n:,}")
-                with e4: kpi("Remediation Rate", f"{_removed_pct:.1f}%")
+                #e1, e2 = st.columns(2)
+                #with e1: kpi("Removed", f"{removed_n:,}")
+                #with e2: kpi("Not Removed", f"{still_present_n:,}")
 
                 st.markdown("#### 📊 Summary — Defects vs Updated User List")
-                number_row([("Not Removed", still_present_n), ("Removed", removed_n)])
+                number_row([("Removed", removed_n), ("Not Removed", still_present_n)])
 
                 if still_present_n == 0:
                     st.success("🎉 All Revoked / No Action Taken / Not Found defects have been removed from the Updated User List.")
@@ -6359,7 +6333,7 @@ def render_jct_reconciliation_tool():
             # =============================================================
             # TEST 1 — JCTs Identified (Found Report)
             # =============================================================
-            st.markdown("### 1️⃣ Test 1 — JCTs Identified")
+            st.markdown("### JCTs Identified")
             if st.session_state.p1_found_df is None:
                 st.caption("⚠️ Run **Test 1** first to generate this report.")
             else:
@@ -6382,17 +6356,17 @@ def render_jct_reconciliation_tool():
 
             st.markdown("#### 📊 Exceptions Overview")
             _t1_found_count = len(st.session_state.p1_found_df) if st.session_state.p1_found_df is not None else 0
-            ov1, ov2, ov3 = st.columns(3)
-            with ov1: kpi("Application JCT - Users Found (Test 1)", f"{_t1_found_count:,}")
-            with ov2: kpi("Test 2 Exceptions", f"{_t2_exceptions:,}")
-            with ov3: kpi("Test 3 Exceptions", f"{_t3_exceptions:,}")
+            ov2, ov3 = st.columns(2)
+            #with ov1: kpi("Application JCT - Users Found (Test 1)", f"{_t1_found_count:,}")
+            with ov2: kpi("Application JCT vs WFH - Exceptions", f"{_t2_exceptions:,}")
+            with ov3: kpi("Action Taken on Identified Defects - Exceptions", f"{_t3_exceptions:,}")
 
             st.markdown("---")
 
             # =============================================================
             # TEST 2 EXCEPTIONS — User List not found in WFH Report
             # =============================================================
-            st.markdown("### 2️⃣ Test 2 Exceptions — User List Not Found in WFH Report")
+            st.markdown("### Test 1 Exceptions — User List Not Found in WFH Report")
             if st.session_state.p2_missing_df is None:
                 st.caption("⚠️ Run **Test 2** first to generate this report.")
             else:
@@ -6416,7 +6390,7 @@ def render_jct_reconciliation_tool():
             # =============================================================
             # TEST 3 EXCEPTIONS — Defects still present in Updated User List
             # =============================================================
-            st.markdown("### 3️⃣ Test 3 Exceptions — Defects Still Present in Updated User List")
+            st.markdown("### Test 2 Exceptions — Defects Still Present in Updated User List")
             if st.session_state.p2_defects_check_df is None:
                 st.caption("⚠️ Run **Test 3** first to generate this report.")
             else:
