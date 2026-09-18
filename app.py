@@ -6422,10 +6422,7 @@ def render_jct_reconciliation_tool():
             st.caption("Bundles every available report below as **separate Excel files** inside one ZIP -- useful when reports need to be shared or filed individually.")
 
             _zip_files = []
-           # if st.session_state.jct_missing_df is not None and len(st.session_state.jct_missing_df) > 0:
-               # _zip_files.append(("Test1_Exceptions.xlsx", to_excel_download(
-                #    st.session_state.jct_missing_df.drop(columns=["__Concat(SSO|Role)"], errors="ignore"), "Test1_Exceptions"
-              #  )))
+            # NOTE: Test1_notfoundcases sheet intentionally excluded from ZIP export (disabled by request).
             if st.session_state.p1_found_df is not None and len(st.session_state.p1_found_df) > 0:
                 _zip_files.append(("Test1_Found_with_Roles.xlsx", to_excel_download(
                     st.session_state.p1_found_df, "Test1_Found"
@@ -6477,8 +6474,7 @@ def render_jct_reconciliation_tool():
             st.caption("A single polished workbook with one sheet per result set -- the recommended file to share with auditors/reviewers for a complete, end-to-end record.")
 
             _master_sheets = {}
-           # if st.session_state.jct_missing_df is not None and len(st.session_state.jct_missing_df) > 0:
-            #    _master_sheets["Test1_Exceptions"] = st.session_state.jct_missing_df.drop(columns=["__Concat(SSO|Role)"], errors="ignore")
+            # NOTE: Test1_notfoundcases sheet intentionally excluded from Master Workbook export (disabled by request).
             if st.session_state.p1_found_df is not None and len(st.session_state.p1_found_df) > 0:
                 _master_sheets["Test1_Found_with_Roles"] = st.session_state.p1_found_df
             if st.session_state.p2_missing_df is not None:
@@ -6505,27 +6501,49 @@ def render_jct_reconciliation_tool():
                     })
 
                     # ---- Cover / Summary sheet, added first for a professional feel ----
+                    _t1_found_count = len(st.session_state.p1_found_df) if st.session_state.p1_found_df is not None else 0
+                    _t1_notfound_count = len(st.session_state.jct_missing_df) if st.session_state.jct_missing_df is not None else 0
+
                     _cover_rows = [
-                        ["Report", "Access Reconciliation Suite — Master Workbook"],
-                        ["Generated On", datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
-                        ["", ""],
-                        ["Test", "Exceptions Count"],
-                      #  ["Test 1 — JCT vs User List", _t1_exceptions],
-                        ["Test 2 — User List vs WFH", _t2_exceptions],
-                        ["Test 3 — Defects Follow-up", _t3_exceptions],
-                      #  ["Total Exceptions", _total_exceptions],
+                        ["Access Reconciliation Suite — Master Workbook", "", "", ""],
+                        ["Generated On", datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "", ""],
+                        ["", "", "", ""],
+                        ["Test", "Summary", "Records Identified", "Remarks"],
+                        ["Test 1 — JCT vs User List", "Users subject to JCT in application", _t1_found_count, "Performed Test 2"],
+                        ["Test 1 — JCT vs User List", "Users not subject to JCT", _t1_notfound_count, "No further work required"],
+                        ["", "", "", ""],
+                        ["Test", "Exceptions Count", "", ""],
+                        ["Test 2 — User List vs WFH", _t2_exceptions, "", ""],
+                        ["Test 3 — Defects Follow-up", _t3_exceptions, "", ""],
                     ]
                     _cover_df = pd.DataFrame(_cover_rows)
                     _cover_df.to_excel(_writer, index=False, header=False, sheet_name="Summary")
                     _cover_ws = _writer.sheets["Summary"]
                     _title_fmt = _wb.add_format({"bold": True, "font_size": 14, "font_color": "#1e40af"})
                     _label_fmt = _wb.add_format({"bold": True, "bg_color": "#f1f5f9"})
-                    _cover_ws.write(0, 0, "Access Reconciliation Suite — Master Workbook", _title_fmt)
+                    _section_header_fmt = _wb.add_format({"bold": True})
+
+                    # Title row
+                    _cover_ws.write(0, 0, _cover_rows[0][0], _title_fmt)
+                    # Generated On row
                     _cover_ws.write(1, 0, "Generated On", _label_fmt)
-                    for _r in (3, 4, 5, 6, 7):
-                        _cover_ws.write(_r, 0, _cover_rows[_r][0], _label_fmt)
+
+                    # ---- Test 1 block (Summary / Records Identified / Remarks) ----
+                    for _c in range(4):
+                        _cover_ws.write(3, _c, _cover_rows[3][_c], _section_header_fmt)
+                    _cover_ws.write(4, 0, _cover_rows[4][0], _label_fmt)
+                    _cover_ws.write(5, 0, _cover_rows[5][0], _label_fmt)
+
+                    # ---- Test 2 / Test 3 block (Exceptions Count) ----
+                    for _c in range(2):
+                        _cover_ws.write(7, _c, _cover_rows[7][_c], _section_header_fmt)
+                    _cover_ws.write(8, 0, _cover_rows[8][0], _label_fmt)
+                    _cover_ws.write(9, 0, _cover_rows[9][0], _label_fmt)
+
                     _cover_ws.set_column(0, 0, 32)
-                    _cover_ws.set_column(1, 1, 26)
+                    _cover_ws.set_column(1, 1, 36)
+                    _cover_ws.set_column(2, 2, 22)
+                    _cover_ws.set_column(3, 3, 26)
 
                     for _sheet_name, _sheet_df in _master_sheets.items():
                         _safe_name = _sheet_name[:31]
