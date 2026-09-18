@@ -6035,7 +6035,7 @@ def render_jct_reconciliation_tool():
                     match_pct_p2 = (matched / total_user * 100) if total_user else 0.0
                     c1, c2, c3, c4 = st.columns(4)
                     with c1: kpi("Rows in User List", f"{total_user:,}")
-                    with c2: kpi("Rows in WFH Report", f"{len(st.session_state.wfh_df):,}")
+                    with c2: kpi("Rows in WFH", f"{len(st.session_state.wfh_df):,}")
                     with c3: kpi("Missing", f"{missing:,}")
                     with c4: kpi("Match Rate", f"{match_pct_p2:.1f}%")
 
