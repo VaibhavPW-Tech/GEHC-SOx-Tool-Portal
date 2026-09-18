@@ -5458,7 +5458,50 @@ def render_jct_reconciliation_tool():
             .jct-step-done{background:#dcfce7;color:#166534;border:1px solid #86efac;}
             .jct-step-pending{background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;}
             .pulse{animation:pulse 1.2s ease-in-out infinite}
-            @keyframes pulse{0%{opacity:.7}50%{opacity:1}100%{opacity:.7}}
+
+            /* ===================== JCT Tool: White & Purple theme override ===================== */
+            .gradient-banner{ background:linear-gradient(135deg,#6B2FA0,#3B1D57) !important; color:#FFFFFF !important; }
+            .gradient-banner *{ color:#FFFFFF !important; }
+            .kpi{ background:#FFFFFF !important; border:1.5px solid #6B2FA0 !important; box-shadow:0 6px 18px rgba(107,47,160,.18) !important; }
+            .kpi h3{ color:#6B2FA0 !important; }
+            .kpi p{ color:#3B1D57 !important; }
+            .card{ background:#FFFFFF !important; border:1.5px solid #6B2FA0 !important; }
+            /* Force ALL alert/notification boxes (success/info/warning/error) to the
+               Purple & White palette -- no green/orange/red anywhere in the JCT tool. */
+            div[data-testid="stAlert"],
+            div[data-testid="stNotification"]{
+                background:#F3EAFB !important;
+                background-color:#F3EAFB !important;
+                border:1.5px solid #6B2FA0 !important;
+                border-radius:10px !important;
+            }
+            div[data-testid="stAlert"] *,
+            div[data-testid="stNotification"] *,
+            div[data-testid="stNotificationContentError"],
+            div[data-testid="stNotificationContentWarning"],
+            div[data-testid="stNotificationContentInfo"],
+            div[data-testid="stNotificationContentSuccess"]{
+                color:#3B1D57 !important;
+                background:transparent !important;
+            }
+            div[data-testid="stAlert"] svg,
+            div[data-testid="stNotification"] svg,
+            div[data-testid="stAlertDynamicIcon"] svg,
+            div[data-testid="stAlertDynamicIcon"] *{
+                fill:#6B2FA0 !important;
+                color:#6B2FA0 !important;
+            }
+            .stMarkdown h1,.stMarkdown h2,.stMarkdown h3,.stMarkdown h4,.stMarkdown h5{ color:#3B1D57 !important; }
+            .badge{ background:#FFFFFF !important; color:#6B2FA0 !important; border:1px solid #6B2FA0 !important; }
+            .jct-step-done{ background:#FFFFFF !important; color:#3B1D57 !important; border:1.5px solid #6B2FA0 !important; }
+            .jct-step-pending{ background:#F3EAFB !important; color:#6B2FA0 !important; border:1.5px solid #B47FE0 !important; }
+            div[data-testid="stExpander"]{ background:#FFFFFF !important; border:1.5px solid #6B2FA0 !important; border-radius:12px !important; }
+            div[data-testid="stExpander"] summary{ color:#3B1D57 !important; }
+            .stButton>button, .stDownloadButton>button{ background:#6B2FA0 !important; color:#FFFFFF !important; border:1.5px solid #3B1D57 !important; font-weight:700 !important; }
+            .stButton>button:hover, .stDownloadButton>button:hover{ background:#3B1D57 !important; color:#FFFFFF !important; }
+            div[data-testid="stDataFrame"]{ border:1.5px solid #6B2FA0 !important; border-radius:8px !important; }
+            /* ==================================================================================== */
+                        @keyframes pulse{0%{opacity:.7}50%{opacity:1}100%{opacity:.7}}
             </style>
             """
         else:
@@ -5508,7 +5551,50 @@ def render_jct_reconciliation_tool():
             .jct-step-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:999px;font-size:.82rem;font-weight:700;margin-right:8px;margin-bottom:6px;}
             .jct-step-done{background:#dcfce7;color:#166534;border:1px solid #86efac;}
             .jct-step-pending{background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;}
-            [data-testid="stSidebar"]{background:var(--sidebar)!important;border-right:1px solid var(--border);}
+
+            /* ===================== JCT Tool: White & Purple theme override ===================== */
+            .gradient-banner{ background:linear-gradient(135deg,#6B2FA0,#3B1D57) !important; color:#FFFFFF !important; }
+            .gradient-banner *{ color:#FFFFFF !important; }
+            .kpi{ background:#FFFFFF !important; border:1.5px solid #6B2FA0 !important; box-shadow:0 6px 18px rgba(107,47,160,.18) !important; }
+            .kpi h3{ color:#6B2FA0 !important; }
+            .kpi p{ color:#3B1D57 !important; }
+            .card{ background:#FFFFFF !important; border:1.5px solid #6B2FA0 !important; }
+            /* Force ALL alert/notification boxes (success/info/warning/error) to the
+               Purple & White palette -- no green/orange/red anywhere in the JCT tool. */
+            div[data-testid="stAlert"],
+            div[data-testid="stNotification"]{
+                background:#F3EAFB !important;
+                background-color:#F3EAFB !important;
+                border:1.5px solid #6B2FA0 !important;
+                border-radius:10px !important;
+            }
+            div[data-testid="stAlert"] *,
+            div[data-testid="stNotification"] *,
+            div[data-testid="stNotificationContentError"],
+            div[data-testid="stNotificationContentWarning"],
+            div[data-testid="stNotificationContentInfo"],
+            div[data-testid="stNotificationContentSuccess"]{
+                color:#3B1D57 !important;
+                background:transparent !important;
+            }
+            div[data-testid="stAlert"] svg,
+            div[data-testid="stNotification"] svg,
+            div[data-testid="stAlertDynamicIcon"] svg,
+            div[data-testid="stAlertDynamicIcon"] *{
+                fill:#6B2FA0 !important;
+                color:#6B2FA0 !important;
+            }
+            .stMarkdown h1,.stMarkdown h2,.stMarkdown h3,.stMarkdown h4,.stMarkdown h5{ color:#3B1D57 !important; }
+            .badge{ background:#FFFFFF !important; color:#6B2FA0 !important; border:1px solid #6B2FA0 !important; }
+            .jct-step-done{ background:#FFFFFF !important; color:#3B1D57 !important; border:1.5px solid #6B2FA0 !important; }
+            .jct-step-pending{ background:#F3EAFB !important; color:#6B2FA0 !important; border:1.5px solid #B47FE0 !important; }
+            div[data-testid="stExpander"]{ background:#FFFFFF !important; border:1.5px solid #6B2FA0 !important; border-radius:12px !important; }
+            div[data-testid="stExpander"] summary{ color:#3B1D57 !important; }
+            .stButton>button, .stDownloadButton>button{ background:#6B2FA0 !important; color:#FFFFFF !important; border:1.5px solid #3B1D57 !important; font-weight:700 !important; }
+            .stButton>button:hover, .stDownloadButton>button:hover{ background:#3B1D57 !important; color:#FFFFFF !important; }
+            div[data-testid="stDataFrame"]{ border:1.5px solid #6B2FA0 !important; border-radius:8px !important; }
+            /* ==================================================================================== */
+                        [data-testid="stSidebar"]{background:var(--sidebar)!important;border-right:1px solid var(--border);}
             </style>
             """
         st.html(css)
@@ -5703,9 +5789,9 @@ def render_jct_reconciliation_tool():
         st.markdown(
             "**Progress:** "
             + _badge("Test 1: JCT vs User List", _p1_done)
-            + _badge("Test 2: User List vs WFH", _p2_done)
+            + _badge("Test 2: Application JCT vs WFH", _p2_done)
             + _badge("Test 3: Defects Follow-up", _p3_done)
-            + _badge("Test 4: Exceptions Ready", _p4_done),
+            + _badge("Test 4: Reports Ready", _p4_done),
             unsafe_allow_html=True
         )
     with _reset_col:
@@ -5726,7 +5812,7 @@ def render_jct_reconciliation_tool():
         "Test 1 — JCT vs User List (SSO)",
         "Test 2 — User List vs WFH (SSO | Role)",
         "Test 3 — Action Taken on Identified Defects",
-        "Test 4 — Exceptions Report"
+        "Test 4 — Reports dashboard"
     ])
 
     # ========== TEST 1: JCT vs User List (SSO exist?) ==========
@@ -5841,36 +5927,13 @@ def render_jct_reconciliation_tool():
             if st.session_state.p1_counts is not None:
                 total_jct = len(st.session_state.jct_df)
                 found = st.session_state.p1_counts.get("Found", 0)
-                not_found = st.session_state.p1_counts.get("Not Found", 0)
-                match_label = "JCT `SSO | Role` not in User List" if use_role_match_p1 else "JCT SSO not in User List"
-                match_pct = (found / total_jct * 100) if total_jct else 0.0
 
-                c1, c2, c3, c4 = st.columns(4)
-                with c1: kpi("Rows in JCT", f"{total_jct:,}")
-                with c2: kpi("Rows in User List", f"{len(st.session_state.user_df_p1):,}")
-                with c3: kpi(match_label, f"{not_found:,}")
-                with c4: kpi("Match Rate", f"{match_pct:.1f}%")
-
-                st.markdown("#### 📊 Summary (JCT vs User List)")
-                number_row([("Found", found), ("Not Found", not_found)])
-
-                if not_found == 0:
-                    st.success("🎉 All JCT `SSO | Role` pairs exist in User List." if use_role_match_p1 else "🎉 All JCT SSO values exist in User List.")
-                else:
-                    st.warning("Some JCT `SSO | Role` pairs were **not found** in the User List." if use_role_match_p1 else "Some JCT SSO values were **not found** in the User List.")
-                    st.dataframe(st.session_state.jct_missing_df, use_container_width=True, hide_index=True)
-                    st.download_button(
-                        "⬇️ Download 'JCT SSO Not Found' (Excel)",
-                        data=to_excel_download(st.session_state.jct_missing_df, "JCT_SSO_Not_Found"),
-                        file_name=f"JCT_SSO_Not_Found_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="p1_dl_missing",
-                    )
-                    st.toast("JCT vs User List comparison complete.", icon="✅")
+                st.markdown("#### 📋 Summary")
+                st.success(f"There were **{found:,}** JCT cases that were identified for the respective application.")
 
                 if found > 0 and st.session_state.p1_found_df is not None and len(st.session_state.p1_found_df) > 0:
-                    st.markdown("#### ✅ Found in Both (with Roles from User List)")
-                    st.dataframe(st.session_state.p1_found_df, use_container_width=True, hide_index=True)
+                    with st.expander(f"📄 Preview Found Cases ({len(st.session_state.p1_found_df):,} rows)", expanded=True):
+                        st.dataframe(st.session_state.p1_found_df, use_container_width=True, hide_index=True)
                     st.download_button(
                         "⬇️ Download 'JCT SSO Found with Roles' (Excel)",
                         data=to_excel_download(st.session_state.p1_found_df, "JCT_SSO_Found_with_Roles"),
@@ -5881,13 +5944,13 @@ def render_jct_reconciliation_tool():
 
     # ========== TEST 2: User List vs WFH (SSO | Role) ==========
     with tab2:
-        st.markdown("### 🔗 Test 2: User List vs Buildsmart Review Report (WFH)\n"
+        st.markdown("### 🔗 Test 2: Application JCT vs Buildsmart Review Report (WFH)\n"
         "(Exact `SSO | Role`)")
-        st.markdown("Upload User List and Buildsmart Review Report (WFH). Combination of SSO|Role covered as part of the Buildsmart review report will be auto mapped.")
+        st.markdown("Upload Application JCT and Buildsmart Review Report (WFH). Combination of SSO|Role covered as part of the Buildsmart review report will be auto mapped.")
 
         col1, col2 = st.columns(2)
         with col1:
-            user_file_p2 = st.file_uploader("👤 User List (CSV/XLSX)", type=["csv", "xlsx", "xls"], key="p2_user")
+            user_file_p2 = st.file_uploader("👤 Application JCT (CSV/XLSX)", type=["csv", "xlsx", "xls"], key="p2_user")
             if user_file_p2:
                 try:
                     st.session_state.user_df_p2 = read_any(user_file_p2)
@@ -5936,7 +5999,7 @@ def render_jct_reconciliation_tool():
             map_col1, map_col2 = st.columns(2)
             with map_col1:
                 st.session_state.user_sso_col_p2, st.session_state.user_role_col_p2 = build_mapping_ui(
-                    st.session_state.user_df_p2, "User List Mapping", default_sso=user_guess_sso_p2, default_role=user_guess_role_p2,
+                    st.session_state.user_df_p2, "Application JCT Mapping", default_sso=user_guess_sso_p2, default_role=user_guess_role_p2,
                     want_role=True, key_prefix="p2_user"
                 )
             with map_col2:
@@ -6012,9 +6075,9 @@ def render_jct_reconciliation_tool():
                     # exceptions immediately rather than scrolling past the
                     # matched/approved records first.
                     # ------------------------------------------------------
-                    st.markdown("#### 🚫 Missing Cases (User List not found in WFH Report)")
+                    st.markdown("#### 🚫 Missing Cases (Application JCT not found in WFH Report)")
                     if missing == 0:
-                        st.success("🎉 All `SSO | Role` pairs from User List are present in WFH Report.")
+                        st.success("🎉 All `SSO | Role` pairs from Application JCT are present in WFH Report.")
                     else:
                         st.warning(f"{missing:,} `SSO | Role` pair(s) from User List were **not found** in WFH Report.")
                         st.dataframe(missing_df, use_container_width=True, hide_index=True)
@@ -6028,7 +6091,7 @@ def render_jct_reconciliation_tool():
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             key="p2_dl_missing",
                         )
-                        st.toast("User List vs WFH comparison complete.", icon="✅")
+                        st.toast("application JCT vs WFH comparison complete.", icon="✅")
 
                     st.markdown("---")
 
@@ -6235,7 +6298,7 @@ def render_jct_reconciliation_tool():
                 _removed_pct = (removed_n / _total_checked * 100) if _total_checked else 0.0
 
                 e1, e2, e3, e4 = st.columns(4)
-                with e1: kpi("Total Defects Checked", f"{len(check_df):,}")
+                with e1: kpi("Total Defects", f"{len(check_df):,}")
                 with e2: kpi("Not Removed", f"{still_present_n:,}")
                 with e3: kpi("Removed", f"{removed_n:,}")
                 with e4: kpi("Remediation Rate", f"{_removed_pct:.1f}%")
@@ -6263,9 +6326,9 @@ def render_jct_reconciliation_tool():
                     key="p2_dl_check3",
                 )
 
-    # ========== TEST 4: Exceptions Report & Exports ==========
+    # ========== TEST 4: Reports Dashboard & Exports ==========
     with tab4:
-        st.markdown("### 📦 Test 4 — Exceptions Reports")
+        st.markdown("### 📦 Test 4 — Reports dashboard")
         st.caption(
             "This page consolidates every exception identified across Test 1, Test 2, and Test 3 "
             "into individual, ready-to-share reports -- plus a single consolidated Master Workbook "
@@ -6293,36 +6356,36 @@ def render_jct_reconciliation_tool():
                 _t3_exceptions = int(_counts.get("⚠️ Still Present (Access Not Removed)", 0))
             _total_exceptions = _t1_exceptions + _t2_exceptions + _t3_exceptions
 
-            st.markdown("#### 📊 Exceptions Overview")
-            ov1, ov2, ov3, ov4 = st.columns(4)
-            with ov1: kpi("Test 1 Exceptions", f"{_t1_exceptions:,}")
-            with ov2: kpi("Test 2 Exceptions", f"{_t2_exceptions:,}")
-            with ov3: kpi("Test 3 Exceptions", f"{_t3_exceptions:,}")
-            with ov4: kpi("Total Exceptions", f"{_total_exceptions:,}")
+            # =============================================================
+            # TEST 1 — JCTs Identified (Found Report)
+            # =============================================================
+            st.markdown("### 1️⃣ Test 1 — JCTs Identified")
+            if st.session_state.p1_found_df is None:
+                st.caption("⚠️ Run **Test 1** first to generate this report.")
+            else:
+                _t1_found_df = st.session_state.p1_found_df.copy()
+                if len(_t1_found_df) == 0:
+                    st.info("ℹ️ No JCT cases were identified for the respective application.")
+                else:
+                    st.success(f"There were **{len(_t1_found_df):,}** JCT cases that were identified for the respective application.")
+                    with st.expander(f"📄 Preview Found Report ({len(_t1_found_df):,} rows)", expanded=False):
+                        st.dataframe(_t1_found_df, use_container_width=True, hide_index=True)
+                    st.download_button(
+                        "⬇️ Download JCTs Identified Report (Excel)",
+                        data=to_excel_download(_t1_found_df, "Test1_JCTs_Identified"),
+                        file_name=f"Test1_JCTs_Identified_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="p_dl_test1_found",
+                    )
 
             st.markdown("---")
 
-            # =============================================================
-            # TEST 1 EXCEPTIONS — JCT SSO/Role not found in User List
-            # =============================================================
-            st.markdown("### 1️⃣ Test 1 Exceptions — JCT Not Found in User List")
-            if st.session_state.jct_missing_df is None:
-                st.caption("⚠️ Run **Test 1** first to generate this report.")
-            else:
-                _t1_df = st.session_state.jct_missing_df.drop(columns=["__Concat(SSO|Role)"], errors="ignore").copy()
-                if len(_t1_df) == 0:
-                    st.success("🎉 No exceptions -- all JCT records were found in the User List.")
-                else:
-                    st.warning(f"**{len(_t1_df):,}** exception(s) found: JCT record(s) not present in the User List.")
-                    with st.expander(f"📄 Preview Test 1 Exceptions ({len(_t1_df):,} rows)", expanded=False):
-                        st.dataframe(_t1_df, use_container_width=True, hide_index=True)
-                    st.download_button(
-                        "⬇️ Download Test 1 Exceptions Report (Excel)",
-                        data=to_excel_download(_t1_df, "Test1_Exceptions"),
-                        file_name=f"Test1_Exceptions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="p_dl_test1_exceptions",
-                    )
+            st.markdown("#### 📊 Exceptions Overview")
+            _t1_found_count = len(st.session_state.p1_found_df) if st.session_state.p1_found_df is not None else 0
+            ov1, ov2, ov3 = st.columns(3)
+            with ov1: kpi("Application JCT - Users Found (Test 1)", f"{_t1_found_count:,}")
+            with ov2: kpi("Test 2 Exceptions", f"{_t2_exceptions:,}")
+            with ov3: kpi("Test 3 Exceptions", f"{_t3_exceptions:,}")
 
             st.markdown("---")
 
