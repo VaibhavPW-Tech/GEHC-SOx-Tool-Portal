@@ -6358,8 +6358,8 @@ def render_jct_reconciliation_tool():
             _t1_found_count = len(st.session_state.p1_found_df) if st.session_state.p1_found_df is not None else 0
             ov2, ov3 = st.columns(2)
             #with ov1: kpi("Application JCT - Users Found (Test 1)", f"{_t1_found_count:,}")
-            with ov2: kpi("Application JCT vs WFH - Exceptions", f"{_t2_exceptions:,}")
-            with ov3: kpi("Action Taken on Identified Defects - Exceptions", f"{_t3_exceptions:,}")
+            with ov2: kpi("Exceptions: Review Completeness ", f"{_t2_exceptions:,}")
+            with ov3: kpi("Exceptions: Action not taken", f"{_t3_exceptions:,}")
 
             st.markdown("---")
 
