@@ -6422,10 +6422,10 @@ def render_jct_reconciliation_tool():
             st.caption("Bundles every available report below as **separate Excel files** inside one ZIP -- useful when reports need to be shared or filed individually.")
 
             _zip_files = []
-            if st.session_state.jct_missing_df is not None and len(st.session_state.jct_missing_df) > 0:
-                _zip_files.append(("Test1_Exceptions.xlsx", to_excel_download(
-                    st.session_state.jct_missing_df.drop(columns=["__Concat(SSO|Role)"], errors="ignore"), "Test1_Exceptions"
-                )))
+           # if st.session_state.jct_missing_df is not None and len(st.session_state.jct_missing_df) > 0:
+               # _zip_files.append(("Test1_Exceptions.xlsx", to_excel_download(
+                #    st.session_state.jct_missing_df.drop(columns=["__Concat(SSO|Role)"], errors="ignore"), "Test1_Exceptions"
+              #  )))
             if st.session_state.p1_found_df is not None and len(st.session_state.p1_found_df) > 0:
                 _zip_files.append(("Test1_Found_with_Roles.xlsx", to_excel_download(
                     st.session_state.p1_found_df, "Test1_Found"
@@ -6477,8 +6477,8 @@ def render_jct_reconciliation_tool():
             st.caption("A single polished workbook with one sheet per result set -- the recommended file to share with auditors/reviewers for a complete, end-to-end record.")
 
             _master_sheets = {}
-            if st.session_state.jct_missing_df is not None and len(st.session_state.jct_missing_df) > 0:
-                _master_sheets["Test1_Exceptions"] = st.session_state.jct_missing_df.drop(columns=["__Concat(SSO|Role)"], errors="ignore")
+           # if st.session_state.jct_missing_df is not None and len(st.session_state.jct_missing_df) > 0:
+            #    _master_sheets["Test1_Exceptions"] = st.session_state.jct_missing_df.drop(columns=["__Concat(SSO|Role)"], errors="ignore")
             if st.session_state.p1_found_df is not None and len(st.session_state.p1_found_df) > 0:
                 _master_sheets["Test1_Found_with_Roles"] = st.session_state.p1_found_df
             if st.session_state.p2_missing_df is not None:
@@ -6510,10 +6510,10 @@ def render_jct_reconciliation_tool():
                         ["Generated On", datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
                         ["", ""],
                         ["Test", "Exceptions Count"],
-                        ["Test 1 — JCT vs User List", _t1_exceptions],
+                      #  ["Test 1 — JCT vs User List", _t1_exceptions],
                         ["Test 2 — User List vs WFH", _t2_exceptions],
                         ["Test 3 — Defects Follow-up", _t3_exceptions],
-                        ["Total Exceptions", _total_exceptions],
+                      #  ["Total Exceptions", _total_exceptions],
                     ]
                     _cover_df = pd.DataFrame(_cover_rows)
                     _cover_df.to_excel(_writer, index=False, header=False, sheet_name="Summary")
