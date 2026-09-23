@@ -68,9 +68,8 @@ APP_CM_AUTOMATION = "Change Management"
 APP_NPA_COMPLIANCE = "Authentication - NPA"
 APP_WFH_RECON     = "Highly Privileged Access "
 APP_JCT_RECON     = "Job Change & Transfer"
-APP_HPA           = "Highly Privileged Access"
-ALL_APPS = [APP_SAVIYNT, APP_CM_AUTOMATION, APP_NPA_COMPLIANCE, APP_WFH_RECON, APP_JCT_RECON, APP_HPA]
-SOX_PROVISIONABLE_APPS = [APP_SAVIYNT, APP_CM_AUTOMATION, APP_NPA_COMPLIANCE, APP_WFH_RECON, APP_JCT_RECON, APP_HPA]
+ALL_APPS = [APP_SAVIYNT, APP_CM_AUTOMATION, APP_NPA_COMPLIANCE, APP_WFH_RECON, APP_JCT_RECON]
+SOX_PROVISIONABLE_APPS = [APP_SAVIYNT, APP_CM_AUTOMATION, APP_NPA_COMPLIANCE, APP_WFH_RECON, APP_JCT_RECON]
 
 STATUS_PENDING  = "pending"
 STATUS_APPROVED = "approved"
@@ -1148,7 +1147,7 @@ def _render_manage_existing_users(users: dict, current_role: str):
 # ============================================================================
 # SECTION 5 — APPLICATION DASHBOARD
 # ============================================================================
-APP_ICONS = {APP_SAVIYNT: "🛡️", APP_CM_AUTOMATION: "⚙️", APP_NPA_COMPLIANCE: "🔑", APP_WFH_RECON: "🏠", APP_JCT_RECON: "🧭", APP_HPA: "👤"}
+APP_ICONS = {APP_SAVIYNT: "🛡️", APP_CM_AUTOMATION: "⚙️", APP_NPA_COMPLIANCE: "🔑", APP_WFH_RECON: "🏠", APP_JCT_RECON: "🧭"}
 # APP_LOCATIONS holds the short category/location label shown as the small
 # "eyebrow" text above each app's title on its dashboard tile. Previously
 # every tile hardcoded the literal word "APPLICATION" here regardless of
@@ -1161,7 +1160,6 @@ APP_LOCATIONS = {
     APP_NPA_COMPLIANCE: "AUTHENTICATION - NPA",
     APP_WFH_RECON: "HPA1 - WFH",
     APP_JCT_RECON: "JCT",
-    APP_HPA: "HPA2 - DESIGNATION",
 }
 APP_DESCRIPTIONS = {
     APP_SAVIYNT: "App provisioning testing: Validate access requests for Saviynt based approvals, roles provisioned and export the results in an excel report.",
@@ -1169,7 +1167,6 @@ APP_DESCRIPTIONS = {
     APP_NPA_COMPLIANCE: "NPA password policy compliance: Classify Non-Personal Accounts, reconcile them against CyberArk, and check password policy compliance -- all in-browser.",
     APP_WFH_RECON: "WFH access reconciliation: Compare a User List against a WFH Report, recheck any gaps against Offline Approvals, and export the final exceptions report.",
     APP_JCT_RECON: "JCT access reconciliation: Compare a JCT Report against a User List (SSO), cross-check a User List against a WFH Report (SSO | Role), and export the combined exceptions report.",
-    APP_HPA: "Highly Privileged Access: Get the designations of users.",
 }
 
 # APP_ABOUT holds a longer, more detailed write-up for each tool -- shown
@@ -1183,7 +1180,6 @@ APP_ABOUT = {
     APP_NPA_COMPLIANCE: "The tool provides a comprehensive summary of the total number of NPAs identified, the number of accounts successfully vaulted in CyberArk, and the compliance status of each account against the defined password requirements, by reconciling the population of user accounts against the CyberArk inventory, enabling efficient review of 100% of NPAs.",
     APP_WFH_RECON: "This tool is used to reconcile whether all Highly Privileged Access (HPA) roles assigned to users have been reviewed as part of the HPA review process. It works by reconciling the user-role population against the HPA review results to verify that all HPA roles assigned to users have been properly reviewed and validated. The tool then provides the reconciliation results and highlights any discrepancies or exceptions identified during the analysis.",
     APP_JCT_RECON: "This tool compares the application's user access list with the Saviynt user report to identify users who have undergone role changes, in order to validate that all users with job role changes during the review period have been accurately updated in the application's user list. This comparison checks whether user access has been appropriately updated or removed within the application, as required based on the user's job change.",
-    APP_HPA: "This tool uses the full population of highly privileged users to provide detailed information such as each user's designation and title. Based on this information, the team can analyze whether any functional user has also been assigned IT roles, and assess whether appropriate segregation is being maintained between IT and functional users.",
 }
 
 
@@ -1257,8 +1253,6 @@ def _render_tool_page(active_tool: str):
         render_wfh_reconciliation_tool()
     elif active_tool == APP_JCT_RECON:
         render_jct_reconciliation_tool()
-    elif active_tool == APP_HPA:
-        render_hpa_tool()
 
 
 def render_dashboard():
@@ -1298,16 +1292,8 @@ def render_dashboard():
                 </div>
                 """, unsafe_allow_html=True)
             if st.button("Click Here", key=f"open_{app_name}", use_container_width=True, help=f"Open {app_name}"):
-                if app_name == APP_HPA:
-                    # Simulated infinite loading loop for this tool --
-                    # the "Click Here" button never actually resolves and
-                    # instead shows a perpetual loading spinner.
-                    with st.spinner("Loading..."):
-                        while True:
-                            time.sleep(1)
-                else:
-                    st.session_state.active_tool = app_name
-                    st.rerun()
+                st.session_state.active_tool = app_name
+                st.rerun()
 
 
 # ============================================================================
@@ -6573,13 +6559,6 @@ def render_jct_reconciliation_tool():
 # ============================================================================
 # SECTION 8D — HIGHLY PRIVILEGED ACCESS TOOL
 # ============================================================================
-
-def render_hpa_tool():
-    """Highly Privileged Access tool — used to get the designations of users."""
-    st.markdown("### 👤 Highly Privileged Access")
-    st.caption("Get the designations of users.")
-    st.info("This tool retrieves the designations of users with highly privileged access.")
-
 
 # ============================================================================
 # SECTION 9 — MAIN APP
