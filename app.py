@@ -1147,7 +1147,7 @@ def _render_manage_existing_users(users: dict, current_role: str):
 # ============================================================================
 # SECTION 5 — APPLICATION DASHBOARD
 # ============================================================================
-APP_ICONS = {APP_SAVIYNT: "🛡️", APP_CM_AUTOMATION: "⚙️", APP_NPA_COMPLIANCE: "🔑", APP_WFH_RECON: "🏠", APP_JCT_RECON: "🧭"}
+APP_ICONS = {APP_SAVIYNT: "🛡️", APP_CM_AUTOMATION: "⚙️", APP_NPA_COMPLIANCE: "🔑", APP_WFH_RECON: "📝", APP_JCT_RECON: "🧭"}
 # APP_LOCATIONS holds the short category/location label shown as the small
 # "eyebrow" text above each app's title on its dashboard tile. Previously
 # every tile hardcoded the literal word "APPLICATION" here regardless of
@@ -1158,7 +1158,7 @@ APP_LOCATIONS = {
     APP_SAVIYNT: "APP PROVISIONING",
     APP_CM_AUTOMATION: "CHANGE MANAGEMENT",
     APP_NPA_COMPLIANCE: "AUTHENTICATION - NPA",
-    APP_WFH_RECON: "HPA1 - WFH",
+    APP_WFH_RECON: "HPA",
     APP_JCT_RECON: "JCT",
 }
 APP_DESCRIPTIONS = {
@@ -1208,7 +1208,7 @@ def _render_tool_top_bar(active_tool: str):
             f"""
             <div style="display:flex;align-items:center;height:42px;">
                 <span class="breadcrumb-text" style="padding-top:0;">
-                    Application Dashboard &nbsp;/&nbsp; <span class="current">{active_tool}</span>
+                    Tools Dashboard &nbsp;/&nbsp; <span class="current">{active_tool}</span>
                 </span>
             </div>
             """,
@@ -1264,7 +1264,7 @@ def render_dashboard():
         _render_tool_page(active_tool)
         return
 
-    render_header_banner("Application Dashboard", f"Welcome, {user.get('name')}")
+    render_header_banner("Tool Dashboard", f"Welcome, {user.get('name')}")
     st.markdown(f"Role: <span class='role-badge'>{user.get('role')}</span>", unsafe_allow_html=True)
     st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
 
@@ -1272,7 +1272,7 @@ def render_dashboard():
         st.warning("You currently have no application access assigned. Please contact your Admin to request access.")
         return
 
-    st.subheader("Your Applications")
+    st.subheader("Your Tools")
     #st.caption("Click on any tile below to open that tool.")
     cols = st.columns(2) if len(user_apps) <= 2 else st.columns(3)
     for i, app_name in enumerate(user_apps):
