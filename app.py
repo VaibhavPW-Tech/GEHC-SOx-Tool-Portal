@@ -1165,7 +1165,7 @@ APP_DESCRIPTIONS = {
     APP_SAVIYNT: "App provisioning testing: Validate access requests for Saviynt based approvals, roles provisioned and export the results in an excel report.",
     APP_CM_AUTOMATION: "Change Management SOX testing: Parse change tickets (PDF), perform IT SOD check, validate CAB approvals and export the results in an excel report. ",
     APP_NPA_COMPLIANCE: "NPA password policy compliance: Classify Non-Personal Accounts, reconcile them against CyberArk, and check password policy compliance -- all in-browser.",
-    APP_WFH_RECON: "WFH access reconciliation: Compare a User List against a WFH Report, recheck any gaps against Offline Approvals, and export the final exceptions report.",
+    APP_WFH_RECON: "Access reconciliation: Compare a User List against a WFH Report, recheck any gaps against Offline Approvals, and export the final exceptions report.",
     APP_JCT_RECON: "JCT access reconciliation: Compare a JCT Report against a User List (SSO), cross-check a User List against a WFH Report (SSO | Role), and export the combined exceptions report.",
 }
 
