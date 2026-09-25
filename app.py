@@ -68,8 +68,9 @@ APP_CM_AUTOMATION = "Change Management"
 APP_NPA_COMPLIANCE = "Authentication - NPA"
 APP_WFH_RECON     = "Highly Privileged Access "
 APP_JCT_RECON     = "Job Change & Transfer"
-ALL_APPS = [APP_SAVIYNT, APP_CM_AUTOMATION, APP_NPA_COMPLIANCE, APP_WFH_RECON, APP_JCT_RECON]
-SOX_PROVISIONABLE_APPS = [APP_SAVIYNT, APP_CM_AUTOMATION, APP_NPA_COMPLIANCE, APP_WFH_RECON, APP_JCT_RECON]
+APP_HPA_DESIGNATION = "Highly Privileged Access - Designations"
+ALL_APPS = [APP_SAVIYNT, APP_CM_AUTOMATION, APP_NPA_COMPLIANCE, APP_WFH_RECON, APP_JCT_RECON, APP_HPA_DESIGNATION]
+SOX_PROVISIONABLE_APPS = [APP_SAVIYNT, APP_CM_AUTOMATION, APP_NPA_COMPLIANCE, APP_WFH_RECON, APP_JCT_RECON, APP_HPA_DESIGNATION]
 
 STATUS_PENDING  = "pending"
 STATUS_APPROVED = "approved"
@@ -1147,7 +1148,7 @@ def _render_manage_existing_users(users: dict, current_role: str):
 # ============================================================================
 # SECTION 5 — APPLICATION DASHBOARD
 # ============================================================================
-APP_ICONS = {APP_SAVIYNT: "🛡️", APP_CM_AUTOMATION: "⚙️", APP_NPA_COMPLIANCE: "🔑", APP_WFH_RECON: "📝", APP_JCT_RECON: "🧭"}
+APP_ICONS = {APP_SAVIYNT: "🛡️", APP_CM_AUTOMATION: "⚙️", APP_NPA_COMPLIANCE: "🔑", APP_WFH_RECON: "📝", APP_JCT_RECON: "🧭", APP_HPA_DESIGNATION: "🪪"}
 # APP_LOCATIONS holds the short category/location label shown as the small
 # "eyebrow" text above each app's title on its dashboard tile. Previously
 # every tile hardcoded the literal word "APPLICATION" here regardless of
@@ -1160,13 +1161,15 @@ APP_LOCATIONS = {
     APP_NPA_COMPLIANCE: "AUTHENTICATION - NPA",
     APP_WFH_RECON: "HPA",
     APP_JCT_RECON: "JCT",
+    APP_HPA_DESIGNATION: "HPA - DESIGNATIONS",
 }
 APP_DESCRIPTIONS = {
     APP_SAVIYNT: "App provisioning testing: Validate access requests for Saviynt based approvals, roles provisioned and export the results in an excel report.",
     APP_CM_AUTOMATION: "Change Management SOX testing: Parse change tickets (PDF), perform IT SOD check, validate CAB approvals and export the results in an excel report. ",
     APP_NPA_COMPLIANCE: "NPA password policy compliance: Classify Non-Personal Accounts, reconcile them against CyberArk, and check password policy compliance -- all in-browser.",
-    APP_WFH_RECON: "Access reconciliation: Compare a User List against a Workflow History Report, recheck any gaps against Offline Approvals, and export the final exceptions report.",
+    APP_WFH_RECON: "WFH access reconciliation: Compare a User List against a WFH Report, recheck any gaps against Offline Approvals, and export the final exceptions report.",
     APP_JCT_RECON: "JCT access reconciliation: Compare a JCT Report against a User List (SSO), cross-check a User List against a WFH Report (SSO | Role), and export the combined exceptions report.",
+    APP_HPA_DESIGNATION: "Highly Privileged Access designations: Uses a Power Automate flow to fetch the current designation of each user with highly privileged access.",
 }
 
 # APP_ABOUT holds a longer, more detailed write-up for each tool -- shown
@@ -1180,6 +1183,7 @@ APP_ABOUT = {
     APP_NPA_COMPLIANCE: "The tool provides a comprehensive summary of the total number of NPAs identified, the number of accounts successfully vaulted in CyberArk, and the compliance status of each account against the defined password requirements, by reconciling the population of user accounts against the CyberArk inventory, enabling efficient review of 100% of NPAs.",
     APP_WFH_RECON: "This tool is used to reconcile whether all Highly Privileged Access (HPA) roles assigned to users have been reviewed as part of the HPA review process. It works by reconciling the user-role population against the HPA review results to verify that all HPA roles assigned to users have been properly reviewed and validated. The tool then provides the reconciliation results and highlights any discrepancies or exceptions identified during the analysis.",
     APP_JCT_RECON: "This tool compares the application's user access list with the Saviynt user report to identify users who have undergone role changes, in order to validate that all users with job role changes during the review period have been accurately updated in the application's user list. This comparison checks whether user access has been appropriately updated or removed within the application, as required based on the user's job change.",
+    APP_HPA_DESIGNATION: "This tool uses a power-automate workflow to retrieve the current designation of each user given in the input file, so that the designation on record can be reviewed and validated as part of the HPA/FUAR access review process. Click the button below to run the workflow defined.",
 }
 
 
@@ -1253,6 +1257,8 @@ def _render_tool_page(active_tool: str):
         render_wfh_reconciliation_tool()
     elif active_tool == APP_JCT_RECON:
         render_jct_reconciliation_tool()
+    elif active_tool == APP_HPA_DESIGNATION:
+        render_hpa_designation_tool()
 
 
 def render_dashboard():
@@ -6559,6 +6565,70 @@ def render_jct_reconciliation_tool():
 # ============================================================================
 # SECTION 8D — HIGHLY PRIVILEGED ACCESS TOOL
 # ============================================================================
+# This tool does not process any uploaded files itself -- it simply triggers
+# a Power Automate flow (via the link/button below) that looks up and
+# returns the current designation for each user holding Highly Privileged
+# Access, so that designation can be reviewed as part of the HPA access
+# review process.
+#
+# IMPORTANT: Replace the placeholder URL below with your actual Power
+# Automate flow's "Run" / trigger URL (e.g. an Instant cloud flow with a
+# "When an HTTP request is received" / manual trigger, or its shareable
+# run link from make.powerautomate.com).
+HPA_DESIGNATION_FLOW_URL = "https://make.powerautomate.com/environments/Default-9a309606-d6ec-4188-a28a-298812b4bbbf/flows/shared/71dbe5d2-6546-4c63-96b2-2d432ecc9dcb/details"
+
+
+def render_hpa_designation_tool():
+    st.markdown("### 🪪 Highly Privileged Access — Designations")
+    st.caption("This tool uses a Power Automate flow to fetch the current designation of each user with Highly Privileged Access.")
+
+    st.markdown(
+        f"""
+        <div class="tool-about-card" style="margin-top:0;">
+            <div class="tool-about-icon">🔄</div>
+            <div class="tool-about-text">
+                <div class="tool-about-label">How it works</div>
+                <div class="tool-about-body">
+                    Click the button below to launch the workflow. It looks up and returns
+                    each user's current Job Title, Department, Email Address.
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Rendered as a plain HTML anchor with target="_blank" (rather than
+    # st.link_button) so a NEW browser tab is guaranteed to open on the
+    # user's own machine every time, regardless of whether this app is
+    # running locally or hosted on Streamlit Community Cloud -- the click
+    # is always handled by the user's local browser, not the server.
+    # Text color is forced to white (both the link itself and its inner
+    # <span>/icon) via inline style + a scoped <style> override, since
+    # Streamlit/browser default link styling was overriding the inline
+    # color and rendering it dark/purple instead of white.
+    st.markdown(
+        f"""
+        <a href="{HPA_DESIGNATION_FLOW_URL}" target="_blank" rel="noopener noreferrer"
+           style="display:inline-block;text-decoration:none;background:linear-gradient(135deg,{PRIMARY_PURPLE},{PRIMARY_PURPLE_DARK});
+                  color:#FFFFFF !important;font-weight:600;font-size:15px;padding:0.7rem 1.6rem;
+                  border-radius:10px;box-shadow:0 2px 6px rgba(91,42,134,0.25);margin-top:6px;">
+            <span style="color:#FFFFFF !important;">🔗 Run the workflow </span>
+        </a>
+        <style>
+        a[href="{HPA_DESIGNATION_FLOW_URL}"], a[href="{HPA_DESIGNATION_FLOW_URL}"]:link,
+        a[href="{HPA_DESIGNATION_FLOW_URL}"]:visited, a[href="{HPA_DESIGNATION_FLOW_URL}"]:hover,
+        a[href="{HPA_DESIGNATION_FLOW_URL}"]:active, a[href="{HPA_DESIGNATION_FLOW_URL}"] * {{
+            color:#FFFFFF !important;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
+    st.caption("If the new tab does not open automatically, your browser's pop-up blocker may have intercepted it -- allow pop-ups for this site, or use the link above again.")
+
 
 # ============================================================================
 # SECTION 9 — MAIN APP
