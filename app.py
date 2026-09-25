@@ -464,7 +464,7 @@ def inject_global_css():
            button at the exact same vertical position -- fixes misaligned
            multi-column file-uploader rows (e.g. in the Saviynt tool) without
            touching that tool's own code. */
-        div[data-testid="stWidgetLabel"] {{ min-height: 44px; display: flex; align-items: flex-end; }}
+        label[data-testid="stWidgetLabel"] {{ min-height: 50px; display: flex; align-items: flex-end; }}
         div[data-testid="stFileUploader"] section {{ margin-top: 0 !important; }}
         .app-tile:hover {{ box-shadow: 0 10px 26px rgba(91,42,134,0.18); transform: translateY(-2px); border-color: {PRIMARY_PURPLE}; }}
         .app-tile-icon-badge {{ width: 54px; height: 54px; border-radius: 14px; background: linear-gradient(135deg, {PRIMARY_PURPLE_SOFT}, #FFF); border: 1px solid {BORDER_SOFT}; display: flex; align-items: center; justify-content: center; font-size: 25px; margin-bottom: 12px; flex-shrink: 0; }}
@@ -1470,7 +1470,7 @@ def render_saviynt_tool():
 
     with col_up2:
         sbl_file = st.file_uploader(
-            "Upload Dump Automated file (e.g. sbl_am_automated.xlsx)",
+            "Upload Comprehensive Userlist file (e.g. sbl_am_automated.xlsx)",
             type=["xlsx"],
             key="sbl"
         )
@@ -1498,7 +1498,7 @@ def render_saviynt_tool():
 
     # Extra safety: stop execution until both mandatory files are uploaded
     if df_analytics is None or df_sbl is None:
-        st.info("Please upload both files (Saviynt Summary and Dump Automated) to continue.")
+        st.info("Please upload both files (Saviynt Summary and Comprehensive Userlist) to continue.")
         st.stop()
 
     # Row counts summary (now guaranteed not None)
@@ -1512,7 +1512,7 @@ def render_saviynt_tool():
     st.success(
         f"Files uploaded successfully. "
         f"Saviynt file has {analytics_rows} rows. "
-        f"Dump Automated file has {sbl_rows} rows."
+        f"Comprehensive Userlist file has {sbl_rows} rows."
         f"{entitlement_msg}"
     )
 
