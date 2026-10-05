@@ -61,7 +61,7 @@ USERS_FILE = os.path.join(DATA_DIR, "users.json")
 ROLE_ADMIN = "Admin"
 ROLE_SOX   = "GEHC IT SOX Team"
 ROLE_USER  = "Regular User"
-ALL_ROLES = [ROLE_ADMIN, ROLE_SOX]
+ALL_ROLES = [ROLE_ADMIN, ROLE_SOX, ROLE_USER]
 
 APP_SAVIYNT       = "App Provisioning"
 APP_CM_AUTOMATION = "Change Management"
