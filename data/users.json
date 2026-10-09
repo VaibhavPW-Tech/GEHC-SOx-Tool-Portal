@@ -1,0 +1,22 @@
+{
+  "admin1": {
+    "name": "Portal Administrator",
+    "email": "admin1@gehealthcare.com",
+    "password_hash": "829ac5c0e9510fcae2a68a8f80f727eb536a8140d8a582ac6fe542b837240cf9",
+    "role": "Admin",
+    "apps": [
+      "App Provisioning",
+      "Change Management",
+      "Authentication - NPA",
+      "Highly Privileged Access ",
+      "Job Change & Transfer",
+      "Highly Privileged Access - Designations"
+    ],
+    "active": true,
+    "status": "approved",
+    "created_on": "2026-10-09T10:43:55.332564+05:30",
+    "password_changed_on": "2026-10-09T10:43:55.332581+05:30",
+    "failed_attempts": 0,
+    "locked_until": null
+  }
+}
