@@ -38,5 +38,18 @@
     "password_changed_on": "2026-10-09T11:16:21.597258+05:30",
     "failed_attempts": 0,
     "locked_until": null
+  },
+  "550025846": {
+    "name": "Ashna Tandon",
+    "email": "Ashna.Tandon@gehealthcare.com",
+    "password_hash": "c549bcce1e3e1619a2cf63c47440b998bbd6f0cfa670678b843ce7d7be155e37",
+    "role": "Regular User",
+    "apps": [],
+    "active": true,
+    "status": "pending",
+    "created_on": "2026-10-09T11:27:06.300056+05:30",
+    "password_changed_on": "2026-10-09T11:27:06.300072+05:30",
+    "failed_attempts": 0,
+    "locked_until": null
   }
 }
