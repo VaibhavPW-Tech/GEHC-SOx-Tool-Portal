@@ -61,7 +61,7 @@ USERS_FILE = os.path.join(DATA_DIR, "users.json")
 ROLE_ADMIN = "Admin"
 ROLE_SOX   = "GEHC IT SOX Team"
 ROLE_USER  = "Regular User"
-ALL_ROLES = [ROLE_ADMIN, ROLE_SOX, ROLE_USER]
+ALL_ROLES = [ROLE_ADMIN, ROLE_SOX]
 
 APP_SAVIYNT       = "App Provisioning"
 APP_CM_AUTOMATION = "Change Management"
@@ -117,6 +117,106 @@ def password_complexity_message(errors: list) -> str:
     return "Password must " + "; ".join(errors) + "."
 
 
+# ----------------------------------------------------------------------------
+# GitHub-backed persistent storage for users.json
+# ----------------------------------------------------------------------------
+# Streamlit Community Cloud's local filesystem is EPHEMERAL: it gets wiped
+# on every app restart, redeploy, sleep/wake cycle, or maintenance reboot.
+# That means anything written only to ./data/users.json on local disk will
+# eventually vanish, taking newly-registered / approved users with it.
+#
+# To fix this WITHOUT adding a database, we treat a file in this app's own
+# GitHub repository (default: data/users.json) as the real source of truth.
+# load_users() always pulls the latest copy from GitHub first; save_users()
+# commits every change straight back to that file via the GitHub Contents
+# API. The local file is kept in sync too, purely as an in-run cache so the
+# app still works even if GitHub is briefly unreachable.
+#
+# Setup required (one-time):
+#   1. Create a GitHub Personal Access Token (fine-grained, with
+#      "Contents: Read and write" permission on this repo only).
+#   2. In Streamlit Cloud -> App settings -> Secrets, add:
+#
+#          GITHUB_TOKEN = "ghp_xxxxxxxxxxxxxxxxxxxx"
+#          GITHUB_REPO  = "your-org/your-repo-name"
+#          GITHUB_BRANCH = "main"
+#          GITHUB_USERS_PATH = "data/users.json"
+#
+#      (GITHUB_BRANCH and GITHUB_USERS_PATH are optional — the values above
+#      are the defaults used if you omit them.)
+#
+# If GITHUB_TOKEN / GITHUB_REPO are not set, the app silently falls back to
+# local-disk-only storage (the old, non-persistent behaviour) so local dev
+# still works without any secrets configured.
+# ----------------------------------------------------------------------------
+GITHUB_TOKEN      = st.secrets.get("GITHUB_TOKEN", os.environ.get("GITHUB_TOKEN", ""))
+GITHUB_REPO       = st.secrets.get("GITHUB_REPO", os.environ.get("GITHUB_REPO", ""))          # "owner/repo"
+GITHUB_BRANCH     = st.secrets.get("GITHUB_BRANCH", os.environ.get("GITHUB_BRANCH", "main"))
+GITHUB_USERS_PATH = st.secrets.get("GITHUB_USERS_PATH", os.environ.get("GITHUB_USERS_PATH", "data/users.json"))
+
+_GH_API_BASE = "https://api.github.com"
+
+
+def _github_enabled() -> bool:
+    return bool(GITHUB_TOKEN and GITHUB_REPO)
+
+
+def _gh_headers() -> dict:
+    return {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+
+def _gh_contents_url() -> str:
+    return f"{_GH_API_BASE}/repos/{GITHUB_REPO}/contents/{GITHUB_USERS_PATH}"
+
+
+def _gh_get_file():
+    """Fetch users.json from GitHub. Returns (users_dict_or_None, sha_or_None)."""
+    try:
+        resp = requests.get(
+            _gh_contents_url(),
+            headers=_gh_headers(),
+            params={"ref": GITHUB_BRANCH},
+            timeout=10,
+        )
+    except requests.RequestException:
+        return None, None
+    if resp.status_code == 200:
+        payload = resp.json()
+        sha = payload.get("sha")
+        try:
+            raw = base64.b64decode(payload["content"]).decode("utf-8")
+            users = json.loads(raw)
+        except Exception:
+            return None, sha
+        return users, sha
+    return None, None
+
+
+def _gh_put_file(users: dict, sha: str = None, message: str = "Update users.json"):
+    """Create/update users.json in GitHub. Returns True on success."""
+    body = {
+        "message": message,
+        "content": base64.b64encode(json.dumps(users, indent=2).encode("utf-8")).decode("utf-8"),
+        "branch": GITHUB_BRANCH,
+    }
+    if sha:
+        body["sha"] = sha
+    try:
+        resp = requests.put(
+            _gh_contents_url(),
+            headers=_gh_headers(),
+            json=body,
+            timeout=10,
+        )
+    except requests.RequestException:
+        return False
+    return resp.status_code in (200, 201)
+
+
 def _seed_users():
     return {
         "admin1": {"name": "Portal Administrator", "email": "admin1@gehealthcare.com",
@@ -129,6 +229,8 @@ def _seed_users():
 
 
 def _ensure_data_file():
+    """Local on-disk cache file only. Not the source of truth when GitHub
+    persistence is configured — see load_users()/save_users() below."""
     os.makedirs(DATA_DIR, exist_ok=True)
     if not os.path.exists(USERS_FILE):
         with open(USERS_FILE, "w", encoding="utf-8") as f:
@@ -136,9 +238,37 @@ def _ensure_data_file():
 
 
 def load_users() -> dict:
-    _ensure_data_file()
-    with open(USERS_FILE, "r", encoding="utf-8") as f:
-        users = json.load(f)
+    """Load the user database.
+
+    When GitHub persistence is configured (GITHUB_TOKEN + GITHUB_REPO in
+    st.secrets), always pull the latest users.json straight from the repo
+    so account data survives Streamlit Cloud restarts/redeploys. Falls back
+    to the local on-disk file if GitHub is unreachable or not configured.
+    """
+    users = None
+    sha = None
+
+    if _github_enabled():
+        users, sha = _gh_get_file()
+        if users is not None:
+            st.session_state["_gh_users_sha"] = sha
+            try:
+                os.makedirs(DATA_DIR, exist_ok=True)
+                with open(USERS_FILE, "w", encoding="utf-8") as f:
+                    json.dump(users, f, indent=2)
+            except Exception:
+                pass
+
+    if users is None:
+        _ensure_data_file()
+        with open(USERS_FILE, "r", encoding="utf-8") as f:
+            users = json.load(f)
+        if _github_enabled():
+            # Repo doesn't have the file yet (first-ever run) -> seed it there.
+            if _gh_put_file(users, sha=None, message="Seed users.json"):
+                _, sha = _gh_get_file()
+                st.session_state["_gh_users_sha"] = sha
+
     needs_resave = False
     for u in users.values():
         cleaned = [a for a in u.get("apps", []) if a in ALL_APPS]
@@ -163,9 +293,31 @@ def load_users() -> dict:
 
 
 def save_users(users: dict):
-    _ensure_data_file()
+    """Persist the user database.
+
+    Commits to GitHub (data/users.json in the app's own repo) when
+    configured, so approvals / new accounts survive container restarts.
+    Always keeps the local on-disk file updated too, as a fast-path cache
+    for the remainder of the current run.
+    """
+    os.makedirs(DATA_DIR, exist_ok=True)
     with open(USERS_FILE, "w", encoding="utf-8") as f:
         json.dump(users, f, indent=2)
+
+    if _github_enabled():
+        sha = st.session_state.get("_gh_users_sha")
+        ok = _gh_put_file(users, sha=sha, message="Update users.json via Sox Tool Portal")
+        if not ok:
+            # sha was stale (e.g. edited elsewhere) -> refetch and retry once
+            _, fresh_sha = _gh_get_file()
+            if fresh_sha:
+                ok = _gh_put_file(users, sha=fresh_sha,
+                                   message="Update users.json via Sox Tool Portal (retry)")
+                if ok:
+                    st.session_state["_gh_users_sha"] = fresh_sha
+        else:
+            _, new_sha = _gh_get_file()
+            st.session_state["_gh_users_sha"] = new_sha
 
 
 def get_user(sso_id: str):
@@ -1315,6 +1467,34 @@ def render_saviynt_tool():
     # =========================================
     #  Helper functions
     # =========================================
+
+    def _saviynt_excel_bytes(df: pd.DataFrame, sheet_name: str = "Report") -> bytes:
+        """Exports a single DataFrame to a polished Excel file (bold white-on-navy
+        header row, auto-fitted column widths, frozen header row, autofilter) --
+        used for every individual Excel download button in this tool."""
+        out = io.BytesIO()
+        safe_name = (sheet_name or "Report")[:31]
+        with pd.ExcelWriter(out, engine="xlsxwriter") as writer:
+            df.to_excel(writer, index=False, sheet_name=safe_name)
+            wb = writer.book
+            ws = writer.sheets[safe_name]
+            header_fmt = wb.add_format({
+                "bold": True, "font_color": "#FFFFFF", "bg_color": "#1e40af",
+                "border": 1, "valign": "vcenter", "align": "center", "text_wrap": True,
+            })
+            for i, col in enumerate(df.columns):
+                ws.write(0, i, col, header_fmt)
+                try:
+                    max_len = max(df[col].astype(str).map(len).max(), len(str(col))) + 2
+                except Exception:
+                    max_len = len(str(col)) + 2
+                ws.set_column(i, i, min(max_len, 60))
+            if len(df) > 0:
+                ws.autofilter(0, 0, len(df), max(len(df.columns) - 1, 0))
+            ws.freeze_panes(1, 0)
+            ws.set_row(0, 22)
+        return out.getvalue()
+
     def make_unique(cols):
         """Make column names unique (for Streamlit/pyarrow display)."""
         seen = {}
@@ -1593,6 +1773,13 @@ def render_saviynt_tool():
                 failed_view = failed_rows_c1[[key_col_1, approval_col, completion_col, "Check1_Result"]].copy()
                 failed_view.columns = make_unique(failed_view.columns)
                 st.dataframe(failed_view)
+                st.download_button(
+                    "⬇️ Download Check 1 (Mode A) — Failed Rows (Excel)",
+                    data=_saviynt_excel_bytes(failed_view, "Check1_ModeA_Failed"),
+                    file_name="Check1_ModeA_Failed.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="dl_c1a_failed",
+                )
             else:
                 st.success("There were no issues or failed cases for this check (Mode A).")
 
@@ -1601,6 +1788,13 @@ def render_saviynt_tool():
             preview = df_check1[preview_cols].copy()
             preview.columns = make_unique(preview.columns)
             st.dataframe(preview)
+            st.download_button(
+                "⬇️ Download Check 1 (Mode A) — All Rows (Excel)",
+                data=_saviynt_excel_bytes(preview, "Check1_ModeA_All"),
+                file_name="Check1_ModeA_All.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_c1a_all",
+            )
 
     # ----------------- MODE B: SBL Created Date vs Analytics Request Approved Date -----------------
     else:
@@ -1778,6 +1972,13 @@ def render_saviynt_tool():
                 ].copy()
                 failed_view_b.columns = make_unique(failed_view_b.columns)
                 st.dataframe(failed_view_b)
+                st.download_button(
+                    "⬇️ Download Check 1 (Mode B) — Failed Rows (Excel)",
+                    data=_saviynt_excel_bytes(failed_view_b, "Check1_ModeB_Failed"),
+                    file_name="Check1_ModeB_Failed.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="dl_c1b_failed",
+                )
             else:
                 st.success("There were no issues or failed cases for this check (Mode B).")
 
@@ -1793,6 +1994,13 @@ def render_saviynt_tool():
             preview_b = df_check1B[preview_cols_b].copy()
             preview_b.columns = make_unique(preview_b.columns)
             st.dataframe(preview_b)
+            st.download_button(
+                "⬇️ Download Check 1 (Mode B) — All Rows (Excel)",
+                data=_saviynt_excel_bytes(preview_b, "Check1_ModeB_All"),
+                file_name="Check1_ModeB_All.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_c1b_all",
+            )
 
     # =========================================
     #  3. Check 2 – SOD: Inter-check between Requested / Approvals / Granted
@@ -1986,6 +2194,13 @@ def render_saviynt_tool():
             failed_view2 = failed_rows_c2[cols_for_output].copy()
             failed_view2.columns = make_unique(failed_view2.columns)
             st.dataframe(failed_view2)
+            st.download_button(
+                "⬇️ Download Check 2 — Failed Rows (Excel)",
+                data=_saviynt_excel_bytes(failed_view2, "Check2_Failed"),
+                file_name="Check2_Failed.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_c2_failed",
+            )
         else:
             st.success("There were no issues or failed cases for this check.")
 
@@ -1993,6 +2208,13 @@ def render_saviynt_tool():
         preview2 = df_check2[cols_for_output].copy()
         preview2.columns = make_unique(preview2.columns)
         st.dataframe(preview2)
+        st.download_button(
+            "⬇️ Download Check 2 — All Rows (Excel)",
+            data=_saviynt_excel_bytes(preview2, "Check2_All"),
+            file_name="Check2_All.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="dl_c2_all",
+        )
 
     # =========================================
     #  4. Check 3 – Role-by-role comparison (multiple roles per user, ALL rows)
@@ -2122,6 +2344,13 @@ def render_saviynt_tool():
             ].copy()
             failed_view3.columns = make_unique(failed_view3.columns)
             st.dataframe(failed_view3)
+            st.download_button(
+                "⬇️ Download Check 3 — Failed Rows (Excel)",
+                data=_saviynt_excel_bytes(failed_view3, "Check3_Failed"),
+                file_name="Check3_Failed.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_c3_failed",
+            )
         else:
             st.success("There were no failed cases for Check 3.")
 
@@ -2132,6 +2361,13 @@ def render_saviynt_tool():
             ].copy()
             passed_view3.columns = make_unique(passed_view3.columns)
             st.dataframe(passed_view3)
+            st.download_button(
+                "⬇️ Download Check 3 — Passed Rows (Excel)",
+                data=_saviynt_excel_bytes(passed_view3, "Check3_Passed"),
+                file_name="Check3_Passed.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_c3_passed",
+            )
         else:
             st.info("There were no passed cases for Check 3.")
 
@@ -2141,6 +2377,13 @@ def render_saviynt_tool():
         ].copy()
         all_view3.columns = make_unique(all_view3.columns)
         st.dataframe(all_view3)
+        st.download_button(
+            "⬇️ Download Check 3 — All Rows (Excel)",
+            data=_saviynt_excel_bytes(all_view3, "Check3_All"),
+            file_name="Check3_All.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="dl_c3_all",
+        )
 
     # =========================================
     #  5. Check 4 – Role & Approver Comparison (Per Approval Level vs Entitlement Owner List)
@@ -2468,13 +2711,23 @@ def render_saviynt_tool():
 
                 # ---------- Download this check's results separately (FULL data incl. Valid? columns) ----------
                 csv_c4 = df_check4.to_csv(index=False).encode("utf-8")
-                st.download_button(
-                    "📥 Download Check 4 Results (CSV) — includes full audit detail",
-                    data=csv_c4,
-                    file_name="check4_role_approval_results.csv",
-                    mime="text/csv",
-                    key="download_check4"
-                )
+                dl_c4_1, dl_c4_2 = st.columns(2)
+                with dl_c4_1:
+                    st.download_button(
+                        "📥 Download Check 4 Results (CSV) — includes full audit detail",
+                        data=csv_c4,
+                        file_name="check4_role_approval_results.csv",
+                        mime="text/csv",
+                        key="download_check4"
+                    )
+                with dl_c4_2:
+                    st.download_button(
+                        "⬇️ Download Check 4 Results (Excel) — includes full audit detail",
+                        data=_saviynt_excel_bytes(df_check4, "Check4_RoleApproval"),
+                        file_name="check4_role_approval_results.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="download_check4_xlsx"
+                    )
 
     # =========================================
     #  6. Combined Download (all checks)
@@ -2488,12 +2741,23 @@ def render_saviynt_tool():
             st.write(f"Combined report has {len(combined_df)} rows across all checks run.")
 
             csv_data = combined_df.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                "📥 Download Combined Results (CSV)",
-                data=csv_data,
-                file_name="sox_access_comparison_results.csv",
-                mime="text/csv"
-            )
+            dl_comb_1, dl_comb_2 = st.columns(2)
+            with dl_comb_1:
+                st.download_button(
+                    "📥 Download Combined Results (CSV)",
+                    data=csv_data,
+                    file_name="sox_access_comparison_results.csv",
+                    mime="text/csv",
+                    key="dl_combined_csv",
+                )
+            with dl_comb_2:
+                st.download_button(
+                    "⬇️ Download Combined Results (Excel)",
+                    data=_saviynt_excel_bytes(combined_df, "Combined_Results"),
+                    file_name="sox_access_comparison_results.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="dl_combined_xlsx",
+                )
         except Exception as e:
             st.warning(f"Could not combine all results into a single file: {e}")
     else:
