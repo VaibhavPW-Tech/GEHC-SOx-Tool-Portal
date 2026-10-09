@@ -18,5 +18,18 @@
     "password_changed_on": "2026-10-09T10:43:55.332581+05:30",
     "failed_attempts": 0,
     "locked_until": null
+  },
+  "550020293": {
+    "name": "Vaibhav Goyal",
+    "email": "vaibhav.goyal@gehealthcare.com",
+    "password_hash": "7ffb7b024bd6035300d0ab5c4c3e090411658a9c054836ad63c91d3626dae05b",
+    "role": "Regular User",
+    "apps": [],
+    "active": true,
+    "status": "pending",
+    "created_on": "2026-10-09T11:16:21.597237+05:30",
+    "password_changed_on": "2026-10-09T11:16:21.597258+05:30",
+    "failed_attempts": 0,
+    "locked_until": null
   }
 }
