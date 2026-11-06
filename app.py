@@ -4194,6 +4194,93 @@ def render_cm_automation_tool():
             return None
 
 
+    APPROVAL_TS_IN_COMMENT = re.compile(r"(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s*-\s*")
+    ANY_TS = re.compile(r"\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}")
+
+
+    def _norm_header(h):
+        return "".join(str(h or "").split()).lower()
+
+
+    def _find_approval_columns(header_row):
+        """Locate the columns of the Approval List table by header NAME instead of
+        a hard-coded position (so a shifted/merged column can never make us read
+        the wrong one, e.g. 'Approval for' = CHG number instead of a date)."""
+        cols = {}
+        for idx, h in enumerate(header_row):
+            n = _norm_header(h)
+            if n == "state":
+                cols["state"] = idx
+            elif n == "approver":
+                cols["approver"] = idx
+            elif n == "assignmentgroup":
+                cols["group"] = idx
+            elif n == "comments":
+                cols["comments"] = idx
+            elif n == "approvalfor":
+                cols["approval_for"] = idx
+            elif n == "created":
+                cols["created"] = idx
+        return cols
+
+
+    def _cell(row, idx):
+        if idx is None or idx >= len(row):
+            return ""
+        return (row[idx] or "").strip() if isinstance(row[idx], str) or row[idx] is None else str(row[idx]).strip()
+
+
+    def _extract_approval_datetime(row, cols):
+        """Real approval date/time of an 'Approved' row.
+        1) ServiceNow writes '<YYYY-MM-DD HH:MM:SS> - System (Comments)' in the
+           Comments cell at the moment the approval is given -> use that.
+        2) If there is no such comment, fall back to the 'Created' column.
+        3) Last resort: any date-time found anywhere in the row.
+        A CHG number / free text is NEVER returned."""
+        comment = _cell(row, cols.get("comments"))
+        m = APPROVAL_TS_IN_COMMENT.search(comment) or ANY_TS.search(comment)
+        if m:
+            return " ".join((m.group(1) if m.groups() else m.group(0)).split())
+
+        created = _cell(row, cols.get("created"))
+        m = ANY_TS.search(created)
+        if m:
+            return " ".join(m.group(0).split())
+
+        m = ANY_TS.search(" ".join(str(c or "") for c in row))
+        if m:
+            return " ".join(m.group(0).split())
+        return ""
+
+
+    def parse_approval_table(table):
+        """Returns a list of dicts (approver, group, approved_on) for every
+        row whose State is 'Approved'."""
+        results = []
+        if not table:
+            return results
+        header = table[0]
+        cols = _find_approval_columns(header)
+        # defaults = ServiceNow Approval List order
+        cols.setdefault("state", 0)
+        cols.setdefault("approver", 1)
+        cols.setdefault("group", 2)
+        cols.setdefault("comments", 3)
+        cols.setdefault("approval_for", 4)
+        cols.setdefault("created", 5)
+        for row in table[1:]:
+            if not row:
+                continue
+            if _cell(row, cols["state"]).lower() != "approved":
+                continue
+            results.append({
+                "approver": " ".join(_cell(row, cols["approver"]).split()),
+                "group": " ".join(_cell(row, cols["group"]).split()),
+                "approved_on": _extract_approval_datetime(row, cols),
+            })
+        return results
+
+
     def extract_data_from_pdf(file_bytes: bytes, filename: str):
         text = ""
         approvers = []
@@ -4236,23 +4323,16 @@ def render_cm_automation_tool():
                         text += page_text + "\n"
 
                     for table in pdf_page.extract_tables():
-                        if table and "Approver" in table[0]:
-                            df = pd.DataFrame(table[1:], columns=table[0])
-                            approved_rows = df[df.iloc[:, 0].str.lower() == "approved"]
+                        if table and any(_norm_header(h) == "approver" for h in table[0]):
+                            for rec in parse_approval_table(table):
+                                approvers.append(rec["approver"])
+                                approval_dates.append(rec["approved_on"])
+                                approver_details.append(rec["group"])
 
-                            approvers.extend(approved_rows.iloc[:, 1].tolist())
-                            approval_dates.extend(approved_rows.iloc[:, 4].tolist())
-                            approver_details.extend(approved_rows.iloc[:, 2].tolist())
-
-                            for idx, detail in enumerate(approved_rows.iloc[:, 2]):
-                                normalized_detail = str(detail).replace("\n", "").strip()
-                                if "@IT CAB Approvers" in normalized_detail:
+                                if (not cab_approver) and "it cab approvers" in rec["group"].lower():
                                     cab_approval_provided = "Yes"
-                                    cab_approver = approved_rows.iloc[idx, 1]
-                                    cab_approval_date = approved_rows.iloc[idx, 4]
-                                    break
-                            if cab_approver:
-                                break
+                                    cab_approver = rec["approver"]
+                                    cab_approval_date = rec["approved_on"]
         except Exception as e:
             log(f"    [Excel] pdfplumber failed to extract text from {filename}: {e}")
 
