@@ -58,5 +58,18 @@
     "password_changed_on": "2026-10-09T11:27:06.300072+05:30",
     "failed_attempts": 0,
     "locked_until": null
+  },
+  "550005637": {
+    "name": "Sidak Kaur",
+    "email": "sidak.kaur@gehealthcare.com",
+    "password_hash": "fbd5e78703dfe4ca90e312955d45b78cd7ab42ab490762b4165971452ea78597",
+    "role": "Regular User",
+    "apps": [],
+    "active": true,
+    "status": "pending",
+    "created_on": "2026-11-11T11:40:32.302355+05:30",
+    "password_changed_on": "2026-11-11T11:40:32.302370+05:30",
+    "failed_attempts": 0,
+    "locked_until": null
   }
 }
