@@ -78,5 +78,18 @@
     "password_changed_on": "2026-11-11T11:40:32.302370+05:30",
     "failed_attempts": 0,
     "locked_until": null
+  },
+  "550020292": {
+    "name": "Jeevika",
+    "email": "jeevika.tuli@gehealthcare.com",
+    "password_hash": "0c4297726739733c0a0edae93227b55ffc0cbc43a040de4e80bb2310334c170b",
+    "role": "Regular User",
+    "apps": [],
+    "active": true,
+    "status": "pending",
+    "created_on": "2026-11-13T15:20:29.439492+05:30",
+    "password_changed_on": "2026-11-13T15:20:29.439506+05:30",
+    "failed_attempts": 0,
+    "locked_until": null
   }
 }
