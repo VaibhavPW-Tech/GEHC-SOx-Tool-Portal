@@ -98,5 +98,18 @@
     "password_changed_on": "2026-11-13T15:20:29.439506+05:30",
     "failed_attempts": 0,
     "locked_until": null
+  },
+  "550015783": {
+    "name": "Russh Ahluwalia",
+    "email": "russh.ahluwalia1@gehealthcare.com",
+    "password_hash": "37a1194dd874970b9d6767338da00a1a01e8e6bd8c6b7d4c8a2e493e6a785548",
+    "role": "Regular User",
+    "apps": [],
+    "active": true,
+    "status": "pending",
+    "created_on": "2026-11-16T19:39:33.963528+05:30",
+    "password_changed_on": "2026-11-16T19:39:33.963548+05:30",
+    "failed_attempts": 0,
+    "locked_until": null
   }
 }
