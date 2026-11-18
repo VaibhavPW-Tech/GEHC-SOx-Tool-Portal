@@ -116,7 +116,7 @@
     "status": "approved",
     "created_on": "2026-11-16T19:39:33.963528+05:30",
     "password_changed_on": "2026-11-16T19:39:33.963548+05:30",
-    "failed_attempts": 1,
+    "failed_attempts": 2,
     "locked_until": null
   }
 }
